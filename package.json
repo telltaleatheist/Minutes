@@ -1,0 +1,50 @@
+{
+  "name": "boardnotes",
+  "version": "1.0.0",
+  "description": "Audio organizer and meeting notes generator for Secular Student Alliance board meetings",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "electron:dev": "electron . --enable-logging",
+    "electron:debug": "electron . --enable-logging --dev-tools",
+    "package:win-x64": "electron-packager . BoardNotes --platform=win32 --arch=x64 --out=build --overwrite --ignore=\"\\.git\" --ignore=\"build\" --ignore=\"\\.md$\" --extra-resource=utilities"
+  },
+  "author": "",
+  "license": "ISC",
+  "devDependencies": {
+    "electron": "^28.0.0",
+    "electron-builder": "^24.13.3",
+    "electron-packager": "^17.1.2"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^0.39.0",
+    "axios": "^1.7.9",
+    "openai": "^4.77.0"
+  },
+  "build": {
+    "appId": "com.boardnotes.app",
+    "productName": "BoardNotes",
+    "win": {
+      "target": "portable"
+    },
+    "portable": {
+      "artifactName": "BoardNotes.exe"
+    },
+    "files": [
+      "**/*",
+      "!**/*.py",
+      "!assets/**/*",
+      "!build/**/*",
+      "!*.md"
+    ],
+    "extraResources": [
+      {
+        "from": "utilities",
+        "to": "utilities"
+      }
+    ],
+    "directories": {
+      "output": "build"
+    }
+  }
+}
