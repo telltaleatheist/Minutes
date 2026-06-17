@@ -1,6 +1,6 @@
-# BoardNotes
+# Minutes
 
-An Electron application for organizing RODECaster audio recordings and generating AI-powered meeting notes for Secular Student Alliance board meetings.
+An Electron application that transcribes meeting audio/video and generates AI-powered meeting notes, running locally. (Originally "BoardNotes", built for Secular Student Alliance board meetings; now general-purpose.)
 
 ## Features
 
@@ -23,7 +23,7 @@ An Electron application for organizing RODECaster audio recordings and generatin
 ## Project Structure
 
 ```
-BoardNotes/
+Minutes/
 ├── main.js          # Electron main process, IPC handlers
 ├── preload.js       # Context bridge for renderer
 ├── renderer.js      # UI logic and event handlers

@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com;">
-  <title>BoardNotes</title>
+  <title>Minutes</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
@@ -17,7 +17,7 @@
       <svg viewBox="0 0 24 24" fill="currentColor">
         <path d="M19 3H5c-1.1 0-2 .9-2 2v14c0 1.1.9 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm-4 14H9c-.55 0-1-.45-1-1s.45-1 1-1h6c.55 0 1 .45 1 1s-.45 1-1 1zm2-4H7c-.55 0-1-.45-1-1s.45-1 1-1h10c.55 0 1 .45 1 1s-.45 1-1 1zm0-4H7c-.55 0-1-.45-1-1s.45-1 1-1h10c.55 0 1 .45 1 1s-.45 1-1 1z"/>
       </svg>
-      <h1>BoardNotes</h1>
+      <h1>Minutes</h1>
     </div>
     <div class="nav-actions">
       <button id="settings-btn" class="btn btn-ghost btn-icon" title="Settings">
@@ -123,7 +123,7 @@
   <div id="setup-overlay" class="setup-overlay hidden">
     <div class="setup-card">
       <div class="setup-card-head">
-        <h2 id="wizard-title">Set up BoardNotes</h2>
+        <h2 id="wizard-title">Set up Minutes</h2>
         <button id="wizard-close" class="btn btn-ghost btn-icon hidden" title="Close">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
         </button>
@@ -138,8 +138,8 @@
         <!-- Step: Welcome -->
         <div class="setup-step" data-step="welcome">
           <div class="step-head">
-            <h3>Welcome to BoardNotes</h3>
-            <p class="sub">BoardNotes runs entirely on your computer. We'll grab a couple of required tools and let you pick which AI and transcription models to download. It only takes a few clicks.</p>
+            <h3>Welcome to Minutes</h3>
+            <p class="sub">Minutes runs entirely on your computer. We'll grab a couple of required tools and let you pick which AI and transcription models to download. It only takes a few clicks.</p>
           </div>
           <div id="system-info" class="system-info">Detecting your system…</div>
         </div>
@@ -240,7 +240,7 @@
           <div class="finishing">
             <div class="engine-spinner"></div>
             <h3>Setting things up…</h3>
-            <p class="finishing-sub" id="finishing-sub">Downloading the tools BoardNotes needs. This screen will open the app as soon as the essentials are ready.</p>
+            <p class="finishing-sub" id="finishing-sub">Downloading the tools Minutes needs. This screen will open the app as soon as the essentials are ready.</p>
             <div class="finish-bar"><div class="finish-bar-fill" id="finish-bar-fill" style="width:0%"></div></div>
             <p class="finish-stage" id="finish-stage"></p>
           </div>
@@ -252,7 +252,7 @@
         <span class="spacer"></span>
         <button id="save-settings" class="btn btn-ghost hidden">Save preferences</button>
         <button id="wizard-next" class="btn btn-primary">Next</button>
-        <button id="wizard-open" class="btn btn-primary hidden" disabled>Open BoardNotes</button>
+        <button id="wizard-open" class="btn btn-primary hidden" disabled>Open Minutes</button>
       </div>
     </div>
   </div>

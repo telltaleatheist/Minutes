@@ -117,7 +117,7 @@ function findRodecasterDrive() {
 // Get default directories
 ipcMain.handle('get-default-directories', async () => {
   const rodecasterPath = findRodecasterDrive();
-  const outputPath = path.join(app.getPath('documents'), 'BoardNotes Output');
+  const outputPath = path.join(app.getPath('documents'), 'Minutes Output');
 
   return {
     rodecaster: rodecasterPath,

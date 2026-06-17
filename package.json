@@ -1,7 +1,8 @@
 {
-  "name": "boardnotes",
+  "name": "minutes",
+  "productName": "Minutes",
   "version": "1.0.0",
-  "description": "Audio organizer and meeting notes generator for Secular Student Alliance board meetings",
+  "description": "Transcribe meeting audio/video and generate AI meeting notes, running locally.",
   "main": "dist/main.js",
   "scripts": {
     "build": "tsc -p tsconfig.electron.json && tsc -p tsconfig.renderer.json",
@@ -10,7 +11,7 @@
     "start": "npm run build && electron .",
     "electron:dev": "npm run build && electron . --enable-logging",
     "electron:debug": "npm run build && electron . --enable-logging --dev-tools",
-    "package:win-x64": "npm run build && electron-packager . BoardNotes --platform=win32 --arch=x64 --out=build --overwrite --ignore=\"\\.git\" --ignore=\"^/build\" --ignore=\"\\.ts$\" --ignore=\"\\.md$\" --extra-resource=utilities"
+    "package:win-x64": "npm run build && electron-packager . Minutes --platform=win32 --arch=x64 --out=build --overwrite --ignore=\"\\.git\" --ignore=\"^/build\" --ignore=\"\\.ts$\" --ignore=\"\\.md$\" --extra-resource=utilities"
   },
   "author": "",
   "license": "ISC",
@@ -28,13 +29,13 @@
     "openai": "^4.77.0"
   },
   "build": {
-    "appId": "com.boardnotes.app",
-    "productName": "BoardNotes",
+    "appId": "com.minutes.app",
+    "productName": "Minutes",
     "win": {
       "target": "portable"
     },
     "portable": {
-      "artifactName": "BoardNotes.exe"
+      "artifactName": "Minutes.exe"
     },
     "files": [
       "**/*",

@@ -873,7 +873,7 @@ function openWizard(configMode) {
   document.getElementById('setup-overlay').classList.remove('hidden');
   document.getElementById('wizard-close').classList.toggle('hidden', !configMode);
   document.getElementById('save-settings').classList.toggle('hidden', !configMode);
-  document.getElementById('wizard-title').textContent = configMode ? 'BoardNotes setup' : 'Set up BoardNotes';
+  document.getElementById('wizard-title').textContent = configMode ? 'Minutes setup' : 'Set up Minutes';
   initWizardSelection();
   wizardStep = 0;
   renderWizardStep();
@@ -1224,7 +1224,7 @@ async function finishWizardToHome() {
   closeWizard();
   dockExpanded = false;
   renderDock();
-  showToast('success', 'Ready', 'BoardNotes is set up. Any remaining downloads continue in the corner.');
+  showToast('success', 'Ready', 'Minutes is set up. Any remaining downloads continue in the corner.');
 }
 
 function saveDefaultsFromUI() {
