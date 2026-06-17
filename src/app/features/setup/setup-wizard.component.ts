@@ -238,10 +238,14 @@ const CLOUD_MODELS: Record<'claude' | 'openai', { value: string; label: string }
               @case ('review') {
                 <div class="setup-step">
                   <div class="step-head">
-                    <h3>Review &amp; download</h3>
+                    <h3>{{ setup.configMode() ? 'Review changes' : 'Review & download' }}</h3>
                     <p class="sub">
-                      Everything you picked, plus the required tools. Downloads run in the corner —
-                      you can leave this open or come back later.
+                      @if (setup.configMode()) {
+                        Your current setup. Anything you added downloads in the corner after you save.
+                      } @else {
+                        Everything you picked, plus the required tools. Downloads run in the corner —
+                        you can leave this open or come back later.
+                      }
                     </p>
                   </div>
                   <div class="review-list">
@@ -311,15 +315,19 @@ const CLOUD_MODELS: Record<'claude' | 'openai', { value: string; label: string }
           <div class="setup-card-foot">
             <button class="btn btn-secondary" [disabled]="step() === 0" (click)="back()">Back</button>
             <span class="spacer"></span>
-            @if (setup.configMode()) {
-              <button class="btn btn-ghost" (click)="saveSettings()">Save preferences</button>
+            @if (setup.configMode() && stepName() !== 'review' && stepName() !== 'finishing') {
+              <button class="btn btn-ghost" (click)="saveSettings()">Save settings</button>
             }
             @if (stepName() === 'finishing') {
               <button class="btn btn-primary" [disabled]="!ready()" (click)="finishWizardToHome()">Open Minutes</button>
+            } @else if (stepName() === 'review') {
+              @if (setup.configMode()) {
+                <button class="btn btn-primary" (click)="saveAndClose()">Save settings</button>
+              } @else {
+                <button class="btn btn-primary" (click)="next()">Begin setup</button>
+              }
             } @else {
-              <button class="btn btn-primary" (click)="next()">
-                {{ stepName() === 'review' ? 'Begin setup' : 'Next' }}
-              </button>
+              <button class="btn btn-primary" (click)="next()">Next</button>
             }
           </div>
         </div>
@@ -608,6 +616,20 @@ export class SetupWizardComponent {
     if (this.defaultAi()) patch.localAiModel = this.defaultAi();
     await this.config.save(patch);
     this.toast.show('success', 'Saved', 'Settings saved successfully');
+  }
+
+  /**
+   * Config mode "Save settings": persist preferences, queue any newly-added
+   * components (idempotent — already-installed ones are skipped), and close —
+   * without dropping the user onto the first-run "finishing" gate.
+   */
+  async saveAndClose(): Promise<void> {
+    this.enqueueRequired();
+    for (const s of this.components.statuses()) {
+      if (this.selected().has(s.component.id)) this.setup.enqueue(s);
+    }
+    await this.saveSettings();
+    this.setup.closeWizard();
   }
 
   close(): void {
