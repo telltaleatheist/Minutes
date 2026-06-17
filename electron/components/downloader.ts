@@ -140,6 +140,26 @@ export function downloadFile(
           });
         });
 
+        // Idle guard: if the socket goes quiet mid-transfer (stalled CDN, dropped
+        // Wi-Fi), fail fast instead of hanging forever. Resets on every chunk.
+        let idleTimer: NodeJS.Timeout | null = null;
+        const IDLE_MS = 60_000;
+        const armIdle = () => {
+          if (idleTimer) clearTimeout(idleTimer);
+          idleTimer = setTimeout(() => {
+            activeRequest?.destroy(new Error('Download stalled (no data for 60s)'));
+          }, IDLE_MS);
+        };
+        const clearIdle = () => {
+          if (idleTimer) clearTimeout(idleTimer);
+          idleTimer = null;
+        };
+        response.on('data', armIdle);
+        response.on('end', clearIdle);
+        response.on('close', clearIdle);
+        response.on('error', clearIdle);
+        armIdle();
+
         response.pipe(file);
 
         file.on('finish', () => {
@@ -193,6 +213,45 @@ export function downloadFile(
 
     makeRequest(url, 10);
   });
+}
+
+/**
+ * downloadFile with automatic retries. Large model downloads (1–3 GB) can be
+ * killed by a single transient network blip or a stalled socket; without retry
+ * the whole multi-minute download is lost. Retries the full download (no resume)
+ * on transient errors, with a short backoff. Never retries a user cancellation.
+ */
+export async function downloadFileWithRetry(
+  url: string,
+  destPath: string,
+  id: string,
+  onProgress: (p: InstallProgress) => void,
+  signal?: AbortSignal,
+  attempts = 3
+): Promise<void> {
+  let lastErr: unknown;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
+    try {
+      await downloadFile(url, destPath, id, onProgress, signal);
+      return;
+    } catch (err) {
+      // A user cancel aborts immediately — do not retry.
+      if (signal?.aborted) throw err;
+      lastErr = err;
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[COMPONENTS] ${id}: download attempt ${attempt}/${attempts} failed: ${msg}`);
+      if (attempt < attempts) {
+        onProgress({
+          id,
+          phase: 'download',
+          pct: 0,
+          message: `Connection lost — retrying (${attempt}/${attempts - 1})…`,
+        });
+        await new Promise((r) => setTimeout(r, 1500 * attempt));
+      }
+    }
+  }
+  throw lastErr;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

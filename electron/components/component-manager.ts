@@ -9,7 +9,7 @@ import * as os from 'os';
 import * as path from 'path';
 import { app } from 'electron';
 
-import { downloadFile, verifySha256, extractArchive, findFile } from './downloader';
+import { downloadFileWithRetry, verifySha256, extractArchive, findFile } from './downloader';
 import { profile, evaluate } from './system-probe';
 import { getCatalog, getComponent } from './catalog';
 import { downloadLlamaCudaInto, LLAMA_CUDA_ID } from './llama-cuda';
@@ -173,7 +173,7 @@ export async function install(
         const fileName = artifact.fileName || basenameFromUrl(artifact.url, component.entryPath);
         const dest = path.join(installDir, fileName);
         const tmp = `${dest}.part`;
-        await downloadFile(artifact.url, tmp, id, emit, ac.signal);
+        await downloadFileWithRetry(artifact.url, tmp, id, emit, ac.signal);
         await verifySha256(tmp, artifact.sha256, id, emit);
         fs.renameSync(tmp, dest);
         entryAbs = dest;
@@ -182,7 +182,7 @@ export async function install(
         const tmpRoot = fs.mkdtempSync(path.join(os.tmpdir(), `boardnotes-${id}-`));
         const archivePath = path.join(tmpRoot, basenameFromUrl(artifact.url, 'artifact'));
         try {
-          await downloadFile(artifact.url, archivePath, id, emit, ac.signal);
+          await downloadFileWithRetry(artifact.url, archivePath, id, emit, ac.signal);
           await verifySha256(archivePath, artifact.sha256, id, emit);
           emit({ id, phase: 'extract', pct: 0, message: 'Extracting…' });
           await extractArchive(archivePath, installDir, artifact.url);
