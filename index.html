@@ -34,13 +34,7 @@
   </nav>
 
   <div class="container">
-    <!-- Tabs -->
-    <div class="tabs">
-      <button class="tab active" data-tab="process">Generate Notes</button>
-      <button class="tab" data-tab="settings">Settings</button>
-    </div>
-
-    <!-- Process Tab -->
+    <!-- Home: Generate Notes -->
     <div id="process-tab" class="tab-content">
       <!-- Drop Zone -->
       <input type="file" id="file-input" accept=".wav,.mp3,.m4a,.flac,.ogg,.aac,.wma,.mp4,.mov,.mkv,.webm,.avi" hidden>
@@ -121,86 +115,166 @@
       </div>
     </div>
 
-    <!-- Settings Tab -->
-    <div id="settings-tab" class="tab-content hidden">
-      <div class="panel">
-        <div class="panel-header">
-          <h2 class="panel-title">AI Configuration</h2>
+  </div>
+
+  <!-- ======================================================================
+       SETUP WIZARD OVERLAY
+       ====================================================================== -->
+  <div id="setup-overlay" class="setup-overlay hidden">
+    <div class="setup-card">
+      <div class="setup-card-head">
+        <h2 id="wizard-title">Set up BoardNotes</h2>
+        <button id="wizard-close" class="btn btn-ghost btn-icon hidden" title="Close">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+        </button>
+      </div>
+
+      <div class="steps-indicator">
+        <span id="step-count" class="step-count">Step 1 of 5</span>
+        <div id="step-dots" class="step-dots"></div>
+      </div>
+
+      <div class="setup-card-body">
+        <!-- Step: Welcome -->
+        <div class="setup-step" data-step="welcome">
+          <div class="step-head">
+            <h3>Welcome to BoardNotes</h3>
+            <p class="sub">BoardNotes runs entirely on your computer. We'll grab a couple of required tools and let you pick which AI and transcription models to download. It only takes a few clicks.</p>
+          </div>
+          <div id="system-info" class="system-info">Detecting your system…</div>
         </div>
 
-        <div class="settings-grid">
-          <!-- AI Provider -->
-          <div class="settings-section">
-            <h3 class="settings-section-title">AI Provider</h3>
-            <div class="form-group">
-              <label class="form-label">Provider</label>
-              <select id="ai-provider" class="form-control">
-                <option value="ollama">Ollama (Local)</option>
-                <option value="claude">Claude (Anthropic)</option>
-                <option value="openai">OpenAI</option>
-              </select>
-            </div>
-            <div class="form-group" id="ollama-host-group">
-              <label class="form-label">Ollama Host</label>
-              <div class="input-group">
-                <input type="text" id="ollama-host" class="form-control" value="http://127.0.0.1:11434">
-                <button id="check-ollama" class="btn btn-secondary btn-sm">Check</button>
-              </div>
-            </div>
-            <div class="form-group">
-              <label class="form-label">Model</label>
-              <select id="ai-model" class="form-control">
-                <option value="cogito:32b">Cogito 32B (Recommended)</option>
-                <option value="cogito:14b">Cogito 14B</option>
-                <option value="cogito:8b">Cogito 8B</option>
-                <option value="qwen2.5:32b">Qwen 2.5 32B</option>
-                <option value="llama3.2:latest">Llama 3.2</option>
-              </select>
-            </div>
+        <!-- Step: AI model -->
+        <div class="setup-step hidden" data-step="ai">
+          <div class="step-head">
+            <h3>Choose an AI model</h3>
+            <p class="sub">Runs locally to turn your transcript into meeting notes. Pick one (you can add more later). The local AI engine downloads automatically.</p>
           </div>
-
-          <!-- API Keys -->
-          <div class="settings-section">
-            <h3 class="settings-section-title">API Keys</h3>
-            <div class="form-group">
-              <label class="form-label">Claude API Key</label>
-              <div class="input-group">
-                <input type="password" id="claude-key" class="form-control" placeholder="sk-ant-...">
-                <button id="save-claude-key" class="btn btn-secondary btn-sm">Save</button>
+          <div id="wizard-ai-list" class="select-list"></div>
+          <details id="cloud-providers" class="cloud-details">
+            <summary>Or connect a cloud provider instead</summary>
+            <div class="settings-grid mt-3">
+              <div class="settings-section">
+                <div class="form-group">
+                  <label class="form-label">Provider</label>
+                  <select id="ai-provider" class="form-control">
+                    <option value="local">Local (downloaded model)</option>
+                    <option value="ollama">Ollama</option>
+                    <option value="claude">Claude (Anthropic)</option>
+                    <option value="openai">OpenAI</option>
+                  </select>
+                </div>
+                <div class="form-group" id="ollama-host-group">
+                  <label class="form-label">Ollama Host</label>
+                  <div class="input-group">
+                    <input type="text" id="ollama-host" class="form-control" value="http://127.0.0.1:11434">
+                    <button id="check-ollama" class="btn btn-secondary btn-sm">Check</button>
+                  </div>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">Cloud Model</label>
+                  <select id="ai-model" class="form-control"></select>
+                </div>
               </div>
-              <span id="claude-key-status" class="form-label mt-1" style="color: var(--text-tertiary)">Not configured</span>
+              <div class="settings-section">
+                <div class="form-group">
+                  <label class="form-label">Claude API Key</label>
+                  <div class="input-group">
+                    <input type="password" id="claude-key" class="form-control" placeholder="sk-ant-...">
+                    <button id="save-claude-key" class="btn btn-secondary btn-sm">Save</button>
+                  </div>
+                  <span id="claude-key-status" class="form-label mt-1" style="color: var(--text-tertiary)">Not configured</span>
+                </div>
+                <div class="form-group">
+                  <label class="form-label">OpenAI API Key</label>
+                  <div class="input-group">
+                    <input type="password" id="openai-key" class="form-control" placeholder="sk-...">
+                    <button id="save-openai-key" class="btn btn-secondary btn-sm">Save</button>
+                  </div>
+                  <span id="openai-key-status" class="form-label mt-1" style="color: var(--text-tertiary)">Not configured</span>
+                </div>
+              </div>
+            </div>
+          </details>
+        </div>
+
+        <!-- Step: Whisper model -->
+        <div class="setup-step hidden" data-step="whisper">
+          <div class="step-head">
+            <h3>Choose a transcription model</h3>
+            <p class="sub">Whisper converts your audio to text. Larger models are more accurate but slower. Pick one or more.</p>
+          </div>
+          <div id="wizard-whisper-list" class="select-list"></div>
+        </div>
+
+        <!-- Step: Optional tools / acceleration -->
+        <div class="setup-step hidden" data-step="tools">
+          <div class="step-head">
+            <h3>Optional extras</h3>
+            <p class="sub">FFmpeg and the local AI engine are required and download automatically. If we detect an NVIDIA GPU, you can add CUDA acceleration here.</p>
+          </div>
+          <div id="wizard-tools-list" class="select-list"></div>
+        </div>
+
+        <!-- Step: Review & download -->
+        <div class="setup-step hidden" data-step="review">
+          <div class="step-head">
+            <h3>Review &amp; download</h3>
+            <p class="sub">Everything you picked, plus the required tools. Downloads run in the corner — you can leave this open or come back later.</p>
+          </div>
+          <div id="wizard-review" class="review-list"></div>
+          <div class="settings-grid mt-3">
+            <div class="form-group">
+              <label class="form-label">Default transcription model</label>
+              <select id="default-whisper" class="form-control"></select>
             </div>
             <div class="form-group">
-              <label class="form-label">OpenAI API Key</label>
-              <div class="input-group">
-                <input type="password" id="openai-key" class="form-control" placeholder="sk-...">
-                <button id="save-openai-key" class="btn btn-secondary btn-sm">Save</button>
-              </div>
-              <span id="openai-key-status" class="form-label mt-1" style="color: var(--text-tertiary)">Not configured</span>
+              <label class="form-label">Default AI model</label>
+              <select id="default-ai" class="form-control"></select>
             </div>
           </div>
         </div>
 
-        <div class="flex justify-between mt-4">
-          <button id="save-settings" class="btn btn-primary">Save Settings</button>
+        <!-- Step: Finishing (gated) -->
+        <div class="setup-step hidden" data-step="finishing">
+          <div class="finishing">
+            <div class="engine-spinner"></div>
+            <h3>Setting things up…</h3>
+            <p class="finishing-sub" id="finishing-sub">Downloading the tools BoardNotes needs. This screen will open the app as soon as the essentials are ready.</p>
+            <div class="finish-bar"><div class="finish-bar-fill" id="finish-bar-fill" style="width:0%"></div></div>
+            <p class="finish-stage" id="finish-stage"></p>
+          </div>
         </div>
       </div>
 
-      <!-- Whisper Settings -->
-      <div class="panel">
-        <div class="panel-header">
-          <h2 class="panel-title">Whisper Configuration</h2>
-        </div>
-        <div class="form-group">
-          <label class="form-label">Whisper Model</label>
-          <select id="whisper-model" class="form-control">
-            <option value="small">Small (Default - Better accuracy)</option>
-            <option value="base">Base (Faster)</option>
-            <option value="tiny">Tiny (Fastest)</option>
-          </select>
-        </div>
+      <div class="setup-card-foot">
+        <button id="wizard-back" class="btn btn-secondary">Back</button>
+        <span class="spacer"></span>
+        <button id="save-settings" class="btn btn-ghost hidden">Save preferences</button>
+        <button id="wizard-next" class="btn btn-primary">Next</button>
+        <button id="wizard-open" class="btn btn-primary hidden" disabled>Open BoardNotes</button>
       </div>
     </div>
+  </div>
+
+  <!-- ======================================================================
+       DOWNLOAD DOCK
+       ====================================================================== -->
+  <div id="dock" class="dock hidden">
+    <div class="dock-header-row">
+      <button id="dock-head" class="dock-head">
+        <span id="dock-icon" class="dock-spinner"></span>
+        <span id="dock-title" class="dock-title">Downloading…</span>
+        <span id="dock-chevron" class="dock-chevron">▾</span>
+      </button>
+      <button id="dock-dismiss" class="dock-dismiss" title="Dismiss">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M19 6.41 17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z"/></svg>
+      </button>
+    </div>
+    <div id="dock-aggregate" class="dock-aggregate">
+      <div class="dock-bar"><div id="dock-aggregate-fill" class="dock-fill" style="width:0%"></div></div>
+    </div>
+    <div id="dock-body" class="dock-body"></div>
   </div>
 
   <!-- Toast Container -->

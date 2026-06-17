@@ -19,8 +19,13 @@ let config = {
   aiProvider: 'ollama',
   aiModel: 'cogito:32b',
   ollamaHost: 'http://127.0.0.1:11434',
-  whisperModel: 'small'
+  whisperModel: 'base',
+  localAiModel: '',
+  setupComplete: false
 };
+
+// Setup state
+let componentStatuses = [];
 
 // ============================================================================
 // INITIALIZATION
@@ -51,15 +56,16 @@ document.addEventListener('DOMContentLoaded', async () => {
   // Setup event listeners
   setupEventListeners();
   setupProgressListeners();
+
+  // Setup / download screen
+  await initSetup();
 });
 
 function applyConfig() {
-  document.getElementById('ai-provider').value = config.aiProvider;
-  document.getElementById('ai-model').value = config.aiModel;
+  document.getElementById('ai-provider').value = config.aiProvider || 'local';
   document.getElementById('ollama-host').value = config.ollamaHost || 'http://127.0.0.1:11434';
-  document.getElementById('whisper-model').value = config.whisperModel || 'base';
 
-  // Show/hide Ollama host based on provider
+  // Show/hide Ollama host + populate the (optional) cloud model list
   updateProviderUI();
 }
 
@@ -85,15 +91,8 @@ function setupEventListeners() {
   // Theme toggle
   document.getElementById('theme-toggle').addEventListener('click', toggleTheme);
 
-  // Settings button
-  document.getElementById('settings-btn').addEventListener('click', () => {
-    switchTab('settings');
-  });
-
-  // Tabs
-  document.querySelectorAll('.tab').forEach(tab => {
-    tab.addEventListener('click', () => switchTab(tab.dataset.tab));
-  });
+  // Settings button → open the setup wizard (config mode)
+  document.getElementById('settings-btn').addEventListener('click', () => openWizard(true));
 
   // File loading: drop zone + picker
   setupDropZone();
@@ -114,6 +113,28 @@ function setupEventListeners() {
   document.getElementById('save-openai-key').addEventListener('click', () => saveApiKey('openai'));
   document.getElementById('save-settings').addEventListener('click', saveSettings);
 
+  // Setup wizard navigation
+  document.getElementById('wizard-next').addEventListener('click', wizardNext);
+  document.getElementById('wizard-back').addEventListener('click', wizardBack);
+  document.getElementById('wizard-open').addEventListener('click', finishWizardToHome);
+  document.getElementById('wizard-close').addEventListener('click', () => {
+    if (config.setupComplete && requiredInstalled()) closeWizard();
+  });
+  document.getElementById('default-whisper').addEventListener('change', (e) => {
+    config.whisperModel = e.target.value;
+  });
+  document.getElementById('default-ai').addEventListener('change', (e) => {
+    config.localAiModel = e.target.value;
+  });
+  // Model selection (checkbox toggles) — event delegation across the wizard lists
+  ['wizard-ai-list', 'wizard-whisper-list', 'wizard-tools-list'].forEach((cid) => {
+    document.getElementById(cid).addEventListener('change', onSelectToggle);
+  });
+
+  // Download dock
+  document.getElementById('dock-head').addEventListener('click', toggleDock);
+  document.getElementById('dock-dismiss').addEventListener('click', dismissDock);
+
   // Modal
   document.getElementById('confirm-cancel').addEventListener('click', hideModal);
 }
@@ -125,6 +146,10 @@ function setupProgressListeners() {
 
   window.electronAPI.onTranscriptionProgress((data) => {
     updateTranscriptionProgress(data);
+  });
+
+  window.electronAPI.onComponentProgress((p) => {
+    updateComponentProgress(p);
   });
 }
 
@@ -177,16 +202,14 @@ function toggleTheme() {
 // ============================================================================
 
 function switchTab(tabName) {
-  // Update tab buttons
   document.querySelectorAll('.tab').forEach(tab => {
     tab.classList.toggle('active', tab.dataset.tab === tabName);
   });
-
-  // Update tab content
   document.querySelectorAll('.tab-content').forEach(content => {
     content.classList.add('hidden');
   });
-  document.getElementById(`${tabName}-tab`).classList.remove('hidden');
+  const el = document.getElementById(`${tabName}-tab`);
+  if (el) el.classList.remove('hidden');
 }
 
 // ============================================================================
@@ -677,13 +700,16 @@ async function updateProviderUI() {
     ]
   };
 
-  if (provider === 'ollama') {
+  if (provider === 'local') {
+    modelSelect.innerHTML = '<option value="">Uses the default AI model selected above</option>';
+  } else if (provider === 'ollama') {
     // Fetch models from Ollama
     await refreshOllamaModels();
   } else {
     modelSelect.innerHTML = cloudModels[provider].map(m =>
       `<option value="${m.value}">${m.label}</option>`
     ).join('');
+    if (config.aiModel) modelSelect.value = config.aiModel;
   }
 
   config.aiProvider = provider;
@@ -758,9 +784,11 @@ async function saveApiKey(provider) {
 
 async function saveSettings() {
   config.aiProvider = document.getElementById('ai-provider').value;
-  config.aiModel = document.getElementById('ai-model').value;
+  const aiModelVal = document.getElementById('ai-model').value;
+  if (aiModelVal) config.aiModel = aiModelVal;
   config.ollamaHost = document.getElementById('ollama-host').value;
-  config.whisperModel = document.getElementById('whisper-model').value;
+  config.whisperModel = document.getElementById('default-whisper').value || config.whisperModel;
+  config.localAiModel = document.getElementById('default-ai').value || config.localAiModel;
 
   try {
     const result = await window.electronAPI.saveConfig(config);
@@ -772,6 +800,477 @@ async function saveSettings() {
   } catch (error) {
     showToast('error', 'Error', error.message);
   }
+}
+
+// ============================================================================
+// SETUP / COMPONENT DOWNLOADS
+// ============================================================================
+
+const WIZARD_STEPS = ['welcome', 'ai', 'whisper', 'tools', 'review', 'finishing'];
+const NUMBERED_STEPS = 5; // welcome..review (finishing is terminal)
+const QUEUE_CONCURRENCY = 2;
+
+let wizardStep = 0;
+let wizardConfigMode = false;
+let wizardSelected = new Set();
+let downloads = {};       // id -> { name, state, pct, received, total, message }
+let dockExpanded = true;
+let dockDismissed = false;
+let activeDownloads = 0;
+
+async function initSetup() {
+  try {
+    renderSystemInfo(await window.electronAPI.detectSystem());
+  } catch (e) {
+    document.getElementById('system-info').textContent = 'Could not detect system.';
+  }
+  await refreshComponents();
+
+  // Gate: hold on the wizard until setup is finished AND required tools installed.
+  if (!config.setupComplete || !requiredInstalled()) {
+    openWizard(false);
+  }
+}
+
+async function refreshComponents() {
+  try {
+    componentStatuses = await window.electronAPI.listComponents();
+  } catch (e) {
+    componentStatuses = [];
+  }
+}
+
+function requiredInstalled() {
+  const req = componentStatuses.filter(s => s.component.required);
+  if (req.length === 0) return true;
+  return req.every(s => s.state === 'installed' ||
+    (downloads[s.component.id] && downloads[s.component.id].state === 'done'));
+}
+
+function renderSystemInfo(sys) {
+  const el = document.getElementById('system-info');
+  if (!el) return;
+  if (!sys) { el.textContent = 'Could not detect system.'; return; }
+  const ramGB = (sys.ramMB / 1024).toFixed(1);
+  const disk = sys.freeDiskMB && sys.freeDiskMB < Number.MAX_SAFE_INTEGER
+    ? `${(sys.freeDiskMB / 1024).toFixed(0)} GB free`
+    : 'free space unknown';
+  const hasGpu = sys.cuda && sys.cuda.available;
+  const gpu = hasGpu
+    ? `NVIDIA ${sys.cuda.name || 'GPU'}${sys.cuda.vramMB ? ` · ${(sys.cuda.vramMB / 1024).toFixed(0)} GB` : ''}`
+    : 'No CUDA GPU';
+  el.innerHTML = `
+    <span class="sys-chip">${sys.platform}/${sys.arch}</span>
+    <span class="sys-chip">${ramGB} GB RAM</span>
+    <span class="sys-chip">${disk}</span>
+    <span class="sys-chip ${hasGpu ? 'sys-chip-gpu' : ''}">${gpu}</span>`;
+}
+
+// ---- Wizard navigation ----
+
+function openWizard(configMode) {
+  wizardConfigMode = configMode;
+  document.getElementById('setup-overlay').classList.remove('hidden');
+  document.getElementById('wizard-close').classList.toggle('hidden', !configMode);
+  document.getElementById('save-settings').classList.toggle('hidden', !configMode);
+  document.getElementById('wizard-title').textContent = configMode ? 'BoardNotes setup' : 'Set up BoardNotes';
+  initWizardSelection();
+  wizardStep = 0;
+  renderWizardStep();
+}
+
+function closeWizard() {
+  document.getElementById('setup-overlay').classList.add('hidden');
+}
+
+function initWizardSelection() {
+  wizardSelected = new Set();
+  componentStatuses.forEach(s => {
+    if (s.component.recommended && s.state !== 'incompatible' &&
+        (s.component.category === 'ai' || s.component.category === 'whisper')) {
+      wizardSelected.add(s.component.id);
+    }
+  });
+}
+
+function renderWizardStep() {
+  const step = WIZARD_STEPS[wizardStep];
+  document.querySelectorAll('.setup-step').forEach(el => {
+    el.classList.toggle('hidden', el.dataset.step !== step);
+  });
+
+  document.getElementById('step-count').textContent =
+    step === 'finishing' ? 'Finishing up' : `Step ${wizardStep + 1} of ${NUMBERED_STEPS}`;
+  renderStepDots();
+
+  if (step === 'ai') renderSelectList('wizard-ai-list', 'ai');
+  else if (step === 'whisper') renderSelectList('wizard-whisper-list', 'whisper');
+  else if (step === 'tools') renderToolsList();
+  else if (step === 'review') renderReview();
+  else if (step === 'finishing') updateFinishingState();
+
+  updateWizardFooter();
+}
+
+function renderStepDots() {
+  let html = '';
+  for (let i = 0; i < NUMBERED_STEPS; i++) {
+    const cls = i < wizardStep ? 'done' : (i === wizardStep ? 'active' : '');
+    html += `<span class="step-dot ${cls}"></span>`;
+  }
+  document.getElementById('step-dots').innerHTML = html;
+}
+
+function updateWizardFooter() {
+  const step = WIZARD_STEPS[wizardStep];
+  const back = document.getElementById('wizard-back');
+  const next = document.getElementById('wizard-next');
+  const open = document.getElementById('wizard-open');
+  back.disabled = wizardStep === 0;
+  if (step === 'review') {
+    next.classList.remove('hidden'); next.textContent = 'Begin setup';
+    open.classList.add('hidden');
+  } else if (step === 'finishing') {
+    next.classList.add('hidden');
+    open.classList.remove('hidden');
+  } else {
+    next.classList.remove('hidden'); next.textContent = 'Next';
+    open.classList.add('hidden');
+  }
+}
+
+function wizardNext() {
+  const step = WIZARD_STEPS[wizardStep];
+  if (step === 'welcome') enqueueRequired();
+  else if (step === 'ai') enqueueSelectedCategory('ai');
+  else if (step === 'whisper') enqueueSelectedCategory('whisper');
+  else if (step === 'tools') enqueueSelectedCategory('accelerator');
+  else if (step === 'review') { beginSetup(); return; }
+  wizardStep++;
+  renderWizardStep();
+}
+
+function wizardBack() {
+  if (wizardStep > 0) {
+    wizardStep--;
+    renderWizardStep();
+  }
+}
+
+function beginSetup() {
+  enqueueRequired();
+  wizardSelected.forEach(id => enqueueDownload(id));
+  saveDefaultsFromUI();
+  wizardStep = WIZARD_STEPS.indexOf('finishing');
+  renderWizardStep();
+}
+
+// ---- Selection lists ----
+
+function onSelectToggle(e) {
+  const cb = e.target;
+  if (!cb || cb.type !== 'checkbox') return;
+  const id = cb.dataset.id;
+  if (!id) return;
+  if (cb.checked) wizardSelected.add(id);
+  else wizardSelected.delete(id);
+  const card = cb.closest('.select-card');
+  if (card) card.classList.toggle('checked', cb.checked);
+}
+
+function renderSelectList(containerId, category) {
+  const container = document.getElementById(containerId);
+  const items = componentStatuses.filter(s => s.component.category === category);
+  container.innerHTML = items.map(selectCardHtml).join('') || '<p class="text-tertiary">Nothing here.</p>';
+}
+
+function selectCardHtml(s) {
+  const c = s.component;
+  const installed = s.state === 'installed';
+  const incompatible = s.state === 'incompatible';
+  const disabled = installed || incompatible;
+  const checked = installed || wizardSelected.has(c.id);
+  const rec = c.recommended ? '<span class="badge badge-rec">Recommended</span>' : '';
+  let meta;
+  if (installed) meta = '<span class="badge badge-ok">Installed</span>';
+  else if (incompatible) meta = `<span class="comp-reason" title="${esc((s.compatibility.reasons || []).join(' '))}">Unavailable</span>`;
+  else meta = `<span class="select-size">${formatSize(c.sizeBytes)}</span>`;
+  return `
+    <label class="select-card ${disabled ? 'disabled' : ''} ${checked ? 'checked' : ''}">
+      <input type="checkbox" data-id="${c.id}" ${checked ? 'checked' : ''} ${disabled ? 'disabled' : ''}>
+      <div class="select-info">
+        <div class="select-name">${c.name} ${rec}</div>
+        <div class="select-desc">${c.description}</div>
+      </div>
+      <div class="select-meta">${meta}</div>
+    </label>`;
+}
+
+function renderToolsList() {
+  const container = document.getElementById('wizard-tools-list');
+  const tools = componentStatuses.filter(s => s.component.category === 'tool' || s.component.category === 'accelerator');
+  container.innerHTML = tools.map(s => {
+    const c = s.component;
+    if (c.required) {
+      const meta = s.state === 'installed'
+        ? '<span class="badge badge-ok">Installed</span>'
+        : '<span class="badge badge-rec">Required · automatic</span>';
+      return `
+        <div class="select-card disabled">
+          <div class="select-info">
+            <div class="select-name">${c.name}</div>
+            <div class="select-desc">${c.description}</div>
+          </div>
+          <div class="select-meta">${meta}</div>
+        </div>`;
+    }
+    return selectCardHtml(s);
+  }).join('') || '<p class="text-tertiary">No optional tools for this system.</p>';
+}
+
+function renderReview() {
+  const list = [];
+  const seen = new Set();
+  const add = (s) => {
+    if (s && s.state !== 'installed' && !seen.has(s.component.id)) { seen.add(s.component.id); list.push(s); }
+  };
+  componentStatuses.filter(s => s.component.required).forEach(add);
+  componentStatuses.filter(s => wizardSelected.has(s.component.id)).forEach(add);
+
+  const totalBytes = list.reduce((sum, s) => sum + (s.component.sizeBytes || 0), 0);
+  let rows = list.map(s =>
+    `<div class="review-row"><span>${s.component.name}${s.component.required ? ' <span class="badge badge-rec">Required</span>' : ''}</span><span class="select-size">${formatSize(s.component.sizeBytes)}</span></div>`
+  ).join('');
+  if (!list.length) rows = '<p class="text-tertiary">Everything needed is already installed.</p>';
+  else rows += `<div class="review-total"><span>Total download</span><span>${formatSize(totalBytes)}</span></div>`;
+  document.getElementById('wizard-review').innerHTML = rows;
+  populateDefaults();
+}
+
+// ---- Download queue + dock ----
+
+function enqueueRequired() {
+  componentStatuses.filter(s => s.component.required).forEach(s => enqueueDownload(s.component.id));
+}
+
+function enqueueSelectedCategory(category) {
+  componentStatuses
+    .filter(s => s.component.category === category && wizardSelected.has(s.component.id))
+    .forEach(s => enqueueDownload(s.component.id));
+}
+
+function enqueueDownload(id) {
+  const status = componentStatuses.find(s => s.component.id === id);
+  if (!status || status.state === 'installed') return;
+  const existing = downloads[id];
+  if (existing && existing.state !== 'failed') return; // already queued/active/done
+  downloads[id] = {
+    name: status.component.name,
+    state: 'queued', pct: 0, received: 0,
+    total: status.component.sizeBytes || 0, message: 'Queued',
+  };
+  showDock();
+  renderDock();
+  runQueue();
+}
+
+function runQueue() {
+  while (activeDownloads < QUEUE_CONCURRENCY) {
+    const nextId = Object.keys(downloads).find(id => downloads[id].state === 'queued');
+    if (!nextId) break;
+    startDownload(nextId);
+  }
+  renderDock();
+}
+
+function startDownload(id) {
+  downloads[id].state = 'downloading';
+  downloads[id].message = 'Starting…';
+  activeDownloads++;
+  window.electronAPI.installComponent(id)
+    .then(result => {
+      if (result.ok) {
+        downloads[id].state = 'done'; downloads[id].pct = 100; downloads[id].message = 'Installed';
+      } else {
+        downloads[id].state = 'failed'; downloads[id].message = result.error || 'Failed';
+      }
+    })
+    .catch(err => {
+      downloads[id].state = 'failed'; downloads[id].message = (err && err.message) || 'Failed';
+    })
+    .finally(async () => {
+      activeDownloads--;
+      await refreshComponents();
+      renderDock();
+      updateFinishingState();
+      runQueue();
+    });
+}
+
+function updateComponentProgress(p) {
+  if (!p || !downloads[p.id]) return;
+  const d = downloads[p.id];
+  if (d.state === 'done' || d.state === 'failed') return;
+  if (p.phase === 'download') {
+    d.pct = p.pct || 0;
+    d.received = p.receivedBytes || 0;
+    if (p.totalBytes) d.total = p.totalBytes;
+    d.message = 'Downloading';
+  } else if (p.phase === 'verify') {
+    d.message = 'Verifying';
+  } else if (p.phase === 'extract') {
+    d.message = 'Extracting';
+    d.pct = Math.max(d.pct, 99);
+  } else if (p.phase === 'done') {
+    d.pct = 100; d.message = 'Installed';
+  } else if (p.phase === 'error') {
+    d.state = 'failed'; d.message = p.message || 'Failed';
+  }
+  renderDock();
+  updateFinishingState();
+}
+
+function showDock() {
+  dockDismissed = false;
+  document.getElementById('dock').classList.remove('hidden');
+}
+
+function toggleDock() {
+  dockExpanded = !dockExpanded;
+  renderDock();
+}
+
+function dismissDock() {
+  dockDismissed = true;
+  document.getElementById('dock').classList.add('hidden');
+}
+
+function renderDock() {
+  const dock = document.getElementById('dock');
+  const ids = Object.keys(downloads);
+  if (dockDismissed || ids.length === 0) { dock.classList.add('hidden'); return; }
+  dock.classList.remove('hidden');
+
+  const items = ids.map(id => downloads[id]);
+  const done = items.filter(d => d.state === 'done').length;
+  const failed = items.filter(d => d.state === 'failed').length;
+  const running = items.some(d => d.state === 'downloading' || d.state === 'queued');
+
+  const icon = document.getElementById('dock-icon');
+  icon.className = running ? 'dock-spinner' : (failed ? 'dock-warn' : 'dock-check');
+  icon.textContent = running ? '' : (failed ? '!' : '✓');
+
+  document.getElementById('dock-title').textContent = running
+    ? `Downloading ${done}/${ids.length}…`
+    : (failed ? `${done}/${ids.length} done · ${failed} failed` : 'Downloads complete');
+
+  const aggPct = Math.round(items.reduce((s, d) => s + (d.state === 'done' ? 100 : (d.pct || 0)), 0) / ids.length);
+  document.getElementById('dock-aggregate-fill').style.width = `${aggPct}%`;
+  document.getElementById('dock-aggregate').classList.toggle('hidden', !running);
+
+  document.getElementById('dock-chevron').textContent = dockExpanded ? '▾' : '▸';
+  const body = document.getElementById('dock-body');
+  body.classList.toggle('hidden', !dockExpanded);
+  body.innerHTML = ids.map(id => dockItemHtml(downloads[id])).join('');
+}
+
+function dockItemHtml(d) {
+  let right;
+  if (d.state === 'downloading' || d.state === 'queued') {
+    const label = d.state === 'queued' ? 'Queued' : `${d.pct}%`;
+    right = `<div class="di-bar"><div class="di-fill" style="width:${d.pct}%"></div></div><span class="di-pct">${label}</span>`;
+  } else if (d.state === 'done') {
+    right = '<span class="di-done">✓</span>';
+  } else {
+    right = `<span class="di-failed" title="${esc(d.message)}">Failed</span>`;
+  }
+  return `<div class="dock-item" data-status="${d.state}"><span class="di-name" title="${esc(d.name)}">${d.name}</span>${right}</div>`;
+}
+
+// ---- Finishing / gate ----
+
+function updateFinishingState() {
+  const open = document.getElementById('wizard-open');
+  const ready = requiredInstalled();
+  if (open) open.disabled = !ready;
+
+  const reqDownloads = componentStatuses
+    .filter(s => s.component.required)
+    .map(s => downloads[s.component.id])
+    .filter(Boolean);
+  const fill = document.getElementById('finish-bar-fill');
+  const stage = document.getElementById('finish-stage');
+  if (reqDownloads.length) {
+    const pct = Math.round(reqDownloads.reduce((s, d) => s + (d.state === 'done' ? 100 : (d.pct || 0)), 0) / reqDownloads.length);
+    if (fill) fill.style.width = `${pct}%`;
+    if (stage) stage.textContent = ready ? 'Essentials ready.' : `Preparing required tools… ${pct}%`;
+  } else if (ready && fill) {
+    fill.style.width = '100%';
+    if (stage) stage.textContent = 'Essentials ready.';
+  }
+
+  // Auto-open home once the essentials are ready and we're sitting on the gate.
+  const onFinishing = WIZARD_STEPS[wizardStep] === 'finishing';
+  const overlayOpen = !document.getElementById('setup-overlay').classList.contains('hidden');
+  if (ready && onFinishing && overlayOpen && !config.setupComplete) {
+    finishWizardToHome();
+  }
+}
+
+async function finishWizardToHome() {
+  config.setupComplete = true;
+  saveDefaultsFromUI();
+  try { await window.electronAPI.saveConfig(config); } catch (e) { /* ignore */ }
+  closeWizard();
+  dockExpanded = false;
+  renderDock();
+  showToast('success', 'Ready', 'BoardNotes is set up. Any remaining downloads continue in the corner.');
+}
+
+function saveDefaultsFromUI() {
+  const dw = document.getElementById('default-whisper');
+  if (dw && dw.value) config.whisperModel = dw.value;
+  const da = document.getElementById('default-ai');
+  if (da && da.value) config.localAiModel = da.value;
+  const prov = document.getElementById('ai-provider');
+  if (prov) config.aiProvider = prov.value;
+}
+
+function populateDefaults() {
+  const whisperSel = document.getElementById('default-whisper');
+  const whisper = componentStatuses.filter(s => s.component.category === 'whisper' &&
+    (s.state === 'installed' || wizardSelected.has(s.component.id)));
+  if (whisper.length === 0) {
+    whisperSel.innerHTML = '<option value="">No models selected yet</option>';
+  } else {
+    whisperSel.innerHTML = whisper.map(s => {
+      const model = s.component.id.replace('whisper-', '');
+      return `<option value="${model}">${s.component.name}</option>`;
+    }).join('');
+    if (config.whisperModel) whisperSel.value = config.whisperModel;
+  }
+
+  const aiSel = document.getElementById('default-ai');
+  const ai = componentStatuses.filter(s => s.component.category === 'ai' &&
+    (s.state === 'installed' || wizardSelected.has(s.component.id)));
+  if (ai.length === 0) {
+    aiSel.innerHTML = '<option value="">No models selected yet</option>';
+  } else {
+    aiSel.innerHTML = ai.map(s => `<option value="${s.component.id}">${s.component.name}</option>`).join('');
+    if (config.localAiModel) aiSel.value = config.localAiModel;
+  }
+}
+
+function esc(str) {
+  return String(str == null ? '' : str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function formatSize(bytes) {
+  if (!bytes || bytes <= 0) return '—';
+  const gb = bytes / (1024 ** 3);
+  if (gb >= 1) return `${gb.toFixed(gb >= 10 ? 0 : 1)} GB`;
+  return `${(bytes / (1024 ** 2)).toFixed(0)} MB`;
 }
 
 // ============================================================================

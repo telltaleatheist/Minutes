@@ -3,6 +3,8 @@ const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
 import { scanAudioSources, finalizeFileSet, finalizeFileSets, processDroppedFiles } from './src/audio-organizer';
+import * as componentManager from './src/components/component-manager';
+import { profile as detectSystemProfile } from './src/components/system-probe';
 
 let mainWindow;
 
@@ -424,8 +426,10 @@ function parseLatestSegmentEndSeconds(text: string): number | null {
 ipcMain.handle('transcribe-audio', async (event, audioPath, modelName = 'base') => {
   return new Promise((resolve, reject) => {
     const whisperPath = getWhisperPath();
-    const modelsPath = getWhisperModelsPath();
-    const modelPath = path.join(modelsPath, `ggml-${modelName}.bin`);
+    // Prefer a model installed via the setup screen (userData/components),
+    // falling back to a model bundled in utilities/models.
+    const downloadedModel = componentManager.resolveEntry(`whisper-${modelName}`);
+    const modelPath = downloadedModel || path.join(getWhisperModelsPath(), `ggml-${modelName}.bin`);
 
     if (!fs.existsSync(whisperPath)) {
       reject(new Error(`Whisper binary not found at ${whisperPath}`));
@@ -705,6 +709,45 @@ ipcMain.handle('open-folder', async (event, folderPath) => {
 ipcMain.handle('save-notes', async (event, notes, outputPath) => {
   try {
     fs.writeFileSync(outputPath, notes, 'utf-8');
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: String(error) };
+  }
+});
+
+// ============================================================================
+// IPC HANDLERS - COMPONENTS (download/setup)
+// ============================================================================
+
+// Detected machine capabilities (platform, RAM, CUDA, free disk).
+ipcMain.handle('detect-system', async () => {
+  return detectSystemProfile();
+});
+
+// Catalog × installed × compatibility for every component.
+ipcMain.handle('list-components', async () => {
+  return componentManager.listStatus();
+});
+
+// Download + verify + install a component, streaming progress to the renderer.
+ipcMain.handle('install-component', async (event, id) => {
+  return componentManager.install(id, (p) => {
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('component-progress', p);
+    }
+  });
+});
+
+// Abort an in-flight install.
+ipcMain.handle('cancel-install', async (event, id) => {
+  componentManager.cancel(id);
+  return { success: true };
+});
+
+// Remove an installed component.
+ipcMain.handle('uninstall-component', async (event, id) => {
+  try {
+    await componentManager.uninstall(id);
     return { success: true };
   } catch (error) {
     return { success: false, error: String(error) };

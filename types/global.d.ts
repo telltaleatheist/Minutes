@@ -35,6 +35,15 @@ interface ElectronAPI {
   openFolder(path: string): Promise<{ success: boolean; error?: string }>;
   saveNotes(notes: string, outputPath: string): Promise<{ success: boolean; error?: string }>;
 
+  // Components (setup / downloads)
+  detectSystem(): Promise<any>;
+  listComponents(): Promise<any[]>;
+  installComponent(id: string): Promise<{ id: string; ok: boolean; error?: string }>;
+  cancelInstall(id: string): Promise<{ success: boolean }>;
+  uninstallComponent(id: string): Promise<{ success: boolean; error?: string }>;
+  onComponentProgress(callback: (data: any) => void): void;
+  removeComponentProgressListener(): void;
+
   // Progress events
   onProgress(callback: (data: any) => void): void;
   removeProgressListener(): void;
