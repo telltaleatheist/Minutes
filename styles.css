@@ -802,6 +802,68 @@ select.form-control {
 }
 
 /* ============================================================================
+   DROP ZONE
+   ============================================================================ */
+
+.drop-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  min-height: 200px;
+  margin-bottom: 1.5rem;
+  padding: 2rem 1.5rem;
+  background: var(--bg-card);
+  border: 2px dashed var(--border-color);
+  border-radius: 12px;
+  cursor: pointer;
+  transition: border-color 0.2s ease, background 0.2s ease, transform 0.15s ease;
+}
+
+.drop-zone:hover {
+  border-color: var(--accent-orange);
+  background: var(--bg-orange-tint);
+}
+
+.drop-zone.dragover {
+  border-color: var(--accent-orange);
+  border-style: solid;
+  background: var(--bg-orange-tint);
+  transform: scale(1.01);
+}
+
+.drop-zone svg {
+  width: 72px;
+  height: 72px;
+  margin-bottom: 1.25rem;
+  fill: var(--accent-orange);
+  pointer-events: none;
+}
+
+.drop-zone h3 {
+  font-size: 1.375rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-bottom: 0.5rem;
+  pointer-events: none;
+}
+
+.drop-zone p {
+  font-size: 0.9375rem;
+  color: var(--text-secondary);
+  margin: 0;
+  pointer-events: none;
+}
+
+.drop-zone .drop-formats {
+  margin-top: 1rem;
+  font-size: 0.8125rem;
+  color: var(--text-tertiary);
+  letter-spacing: 0.02em;
+}
+
+/* ============================================================================
    LOADING SPINNER
    ============================================================================ */
 

@@ -1,0 +1,7 @@
+node_modules/
+dist/
+build/
+*.log
+
+# Whisper model binaries (large; downloaded/installed separately, not committed)
+utilities/models/*.bin

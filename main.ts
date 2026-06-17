@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, Menu, shell } = require('electron')
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
-const { scanAudioSources, finalizeFileSet, finalizeFileSets, processDroppedFiles } = require('./src/audio-organizer');
+import { scanAudioSources, finalizeFileSet, finalizeFileSets, processDroppedFiles } from './src/audio-organizer';
 
 let mainWindow;
 
@@ -18,7 +18,7 @@ function createWindow() {
   });
 
   Menu.setApplicationMenu(null);
-  mainWindow.loadFile('index.html');
+  mainWindow.loadFile(path.join(__dirname, '..', 'index.html'));
 
   // Open DevTools if --dev-tools flag is passed
   if (process.argv.includes('--dev-tools')) {
@@ -51,8 +51,8 @@ app.on('activate', () => {
 function getUtilitiesPath() {
   // In development, utilities are in the project root
   // In production (packaged), they're in resources/utilities
-  const devPath = path.join(__dirname, 'utilities');
-  const prodPath = path.join(process.resourcesPath || '', 'utilities');
+  const devPath = path.join(__dirname, '..', 'utilities');
+  const prodPath = path.join((process as any).resourcesPath || '', 'utilities');
 
   if (fs.existsSync(devPath)) {
     return devPath;
@@ -125,7 +125,7 @@ ipcMain.handle('get-default-directories', async () => {
 
 // Select directory dialog
 ipcMain.handle('select-directory', async (event, defaultPath) => {
-  const dialogOptions = {
+  const dialogOptions: any = {
     properties: ['openDirectory']
   };
 
@@ -141,10 +141,12 @@ ipcMain.handle('select-directory', async (event, defaultPath) => {
 });
 
 ipcMain.handle('select-audio-file', async (event, defaultPath) => {
-  const dialogOptions = {
+  const dialogOptions: any = {
     properties: ['openFile'],
     filters: [
-      { name: 'Audio Files', extensions: ['wav', 'mp3', 'flac', 'm4a', 'ogg'] }
+      { name: 'Audio & Video', extensions: ['wav', 'mp3', 'flac', 'm4a', 'ogg', 'aac', 'wma', 'mp4', 'mov', 'mkv', 'webm', 'avi'] },
+      { name: 'Audio Files', extensions: ['wav', 'mp3', 'flac', 'm4a', 'ogg', 'aac', 'wma'] },
+      { name: 'Video Files', extensions: ['mp4', 'mov', 'mkv', 'webm', 'avi'] }
     ]
   };
 
@@ -246,7 +248,7 @@ ipcMain.handle('save-api-key', async (event, provider, apiKey) => {
   try {
     const apiKeysPath = getApiKeysPath();
 
-    let existingKeys = {};
+    let existingKeys: any = {};
     if (fs.existsSync(apiKeysPath)) {
       existingKeys = JSON.parse(fs.readFileSync(apiKeysPath, 'utf-8'));
     }
@@ -358,6 +360,67 @@ ipcMain.handle('check-ollama', async (event, host) => {
 // IPC HANDLERS - WHISPER TRANSCRIPTION
 // ============================================================================
 
+// Read the duration (in seconds) of a WAV file from its header, without
+// decoding the audio. whisper-cli only accepts WAV input, so this is reliable
+// for every file we feed it. Returns null if the header can't be parsed, in
+// which case progress falls back to whisper's own coarse "progress = N%".
+function getWavDurationSeconds(filePath: string): number | null {
+  let fd: number | null = null;
+  try {
+    fd = fs.openSync(filePath, 'r');
+    // The fmt and data chunk markers live near the start of the file, even
+    // with broadcast-wave metadata chunks (bext/iXML) ahead of the audio.
+    const buf = Buffer.alloc(1024 * 1024);
+    const bytesRead = fs.readSync(fd, buf, 0, buf.length, 0);
+    if (bytesRead < 12) return null;
+    if (buf.toString('ascii', 0, 4) !== 'RIFF' || buf.toString('ascii', 8, 12) !== 'WAVE') {
+      return null;
+    }
+
+    let offset = 12;
+    let byteRate = 0;
+    let dataSize = 0;
+    while (offset + 8 <= bytesRead) {
+      const chunkId = buf.toString('ascii', offset, offset + 4);
+      const chunkSize = buf.readUInt32LE(offset + 4);
+      if (chunkId === 'fmt ') {
+        // fmt: audioFormat(2) channels(2) sampleRate(4) byteRate(4) ...
+        byteRate = buf.readUInt32LE(offset + 8 + 8);
+      } else if (chunkId === 'data') {
+        dataSize = chunkSize;
+        break;
+      }
+      // Chunks are word-aligned: skip a pad byte when the size is odd.
+      offset += 8 + chunkSize + (chunkSize % 2);
+    }
+
+    if (byteRate > 0 && dataSize > 0) {
+      return dataSize / byteRate;
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== null) {
+      try { fs.closeSync(fd); } catch { /* ignore */ }
+    }
+  }
+}
+
+// Parse the END time of the last "[hh:mm:ss.mmm --> hh:mm:ss.mmm]" segment
+// stamp in a chunk of whisper output, returned in seconds. null if none.
+function parseLatestSegmentEndSeconds(text: string): number | null {
+  const re = /-->\s*(\d{2}):(\d{2}):(\d{2})\.(\d{3})\]/g;
+  let match: RegExpExecArray | null;
+  let last: RegExpExecArray | null = null;
+  while ((match = re.exec(text)) !== null) {
+    last = match;
+  }
+  if (!last) return null;
+  const [, hh, mm, ss, ms] = last;
+  return parseInt(hh, 10) * 3600 + parseInt(mm, 10) * 60 + parseInt(ss, 10) + parseInt(ms, 10) / 1000;
+}
+
 ipcMain.handle('transcribe-audio', async (event, audioPath, modelName = 'base') => {
   return new Promise((resolve, reject) => {
     const whisperPath = getWhisperPath();
@@ -394,45 +457,74 @@ ipcMain.handle('transcribe-audio', async (event, audioPath, modelName = 'base') 
     console.log(`[Whisper] Starting transcription: ${audioPath}`);
     console.log(`[Whisper] Command: ${whisperPath} ${args.join(' ')}`);
 
+    const totalSec = getWavDurationSeconds(audioPath);
+    const startTime = Date.now();
+
     const proc = spawn(whisperPath, args, { cwd: outputDir });
 
-    let stderr = '';
-    let lastProgress = 0;
+    // Keep only a bounded tail of stderr for error reporting (avoids the
+    // O(n^2) accumulate-and-rematch on every chunk that the old code did).
+    let stderrTail = '';
+    let coarsePercent = 0;   // whisper's own "progress = N%", used as fallback
+    let processedSec = 0;    // audio seconds transcribed so far (from segment stamps)
 
-    proc.stdout?.on('data', (data) => {
-      const chunk = data.toString();
-      // Parse progress from whisper output
+    // Emit current state to the renderer. Driven both by new output and by a
+    // 1s heartbeat, so the elapsed clock and ETA always advance — the bar can
+    // never silently "freeze" at 90%.
+    const emitProgress = () => {
+      const elapsedSec = (Date.now() - startTime) / 1000;
+      let percent: number;
+      let etaSec: number | null = null;
+      if (totalSec && totalSec > 0 && processedSec > 0) {
+        // Cap at 99 until the process actually exits; we send 100 on close.
+        percent = Math.min(99, Math.round((processedSec / totalSec) * 100));
+        const rate = processedSec / elapsedSec; // audio-sec per wall-sec
+        if (rate > 0) etaSec = Math.max(0, (totalSec - processedSec) / rate);
+      } else {
+        percent = coarsePercent;
+      }
+      mainWindow?.webContents.send('transcription-progress', {
+        percent,
+        processedSec,
+        totalSec: totalSec ?? null,
+        elapsedSec,
+        etaSec,
+      });
+    };
+
+    const heartbeat = setInterval(emitProgress, 1000);
+
+    const handleOutput = (chunk: string) => {
+      const segEnd = parseLatestSegmentEndSeconds(chunk);
+      if (segEnd !== null && segEnd > processedSec) {
+        processedSec = segEnd;
+      }
       const progressMatch = chunk.match(/progress\s*=\s*(\d+)/i);
       if (progressMatch) {
-        const progress = parseInt(progressMatch[1], 10);
-        if (progress > lastProgress) {
-          lastProgress = progress;
-          mainWindow?.webContents.send('transcription-progress', {
-            percent: progress,
-            message: `Transcribing... ${progress}%`
-          });
-        }
+        const p = parseInt(progressMatch[1], 10);
+        if (p > coarsePercent) coarsePercent = p;
       }
-    });
+      if (segEnd !== null || progressMatch) emitProgress();
+    };
+
+    proc.stdout?.on('data', (data) => handleOutput(data.toString()));
 
     proc.stderr?.on('data', (data) => {
-      stderr += data.toString();
-      // Also check stderr for progress
-      const progressMatch = stderr.match(/progress\s*=\s*(\d+)/i);
-      if (progressMatch) {
-        const progress = parseInt(progressMatch[1], 10);
-        if (progress > lastProgress) {
-          lastProgress = progress;
-          mainWindow?.webContents.send('transcription-progress', {
-            percent: progress,
-            message: `Transcribing... ${progress}%`
-          });
-        }
-      }
+      const chunk = data.toString();
+      stderrTail = (stderrTail + chunk).slice(-8192);
+      handleOutput(chunk);
     });
 
     proc.on('close', (code) => {
+      clearInterval(heartbeat);
       if (code === 0) {
+        mainWindow?.webContents.send('transcription-progress', {
+          percent: 100,
+          processedSec: totalSec ?? processedSec,
+          totalSec: totalSec ?? null,
+          elapsedSec: (Date.now() - startTime) / 1000,
+          etaSec: 0,
+        });
         const txtPath = `${outputBase}.txt`;
         if (fs.existsSync(txtPath)) {
           const transcript = fs.readFileSync(txtPath, 'utf-8');
@@ -447,11 +539,12 @@ ipcMain.handle('transcribe-audio', async (event, audioPath, modelName = 'base') 
           reject(new Error('Transcription output file not found'));
         }
       } else {
-        reject(new Error(`Whisper exited with code ${code}: ${stderr}`));
+        reject(new Error(`Whisper exited with code ${code}: ${stderrTail}`));
       }
     });
 
     proc.on('error', (error) => {
+      clearInterval(heartbeat);
       reject(error);
     });
   });

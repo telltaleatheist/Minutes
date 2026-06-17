@@ -2,19 +2,25 @@
   "name": "boardnotes",
   "version": "1.0.0",
   "description": "Audio organizer and meeting notes generator for Secular Student Alliance board meetings",
-  "main": "main.js",
+  "main": "dist/main.js",
   "scripts": {
-    "start": "electron .",
-    "electron:dev": "electron . --enable-logging",
-    "electron:debug": "electron . --enable-logging --dev-tools",
-    "package:win-x64": "electron-packager . BoardNotes --platform=win32 --arch=x64 --out=build --overwrite --ignore=\"\\.git\" --ignore=\"build\" --ignore=\"\\.md$\" --extra-resource=utilities"
+    "build": "tsc -p tsconfig.electron.json && tsc -p tsconfig.renderer.json",
+    "build:watch": "concurrently \"tsc -p tsconfig.electron.json --watch\" \"tsc -p tsconfig.renderer.json --watch\"",
+    "typecheck": "tsc -p tsconfig.electron.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
+    "start": "npm run build && electron .",
+    "electron:dev": "npm run build && electron . --enable-logging",
+    "electron:debug": "npm run build && electron . --enable-logging --dev-tools",
+    "package:win-x64": "npm run build && electron-packager . BoardNotes --platform=win32 --arch=x64 --out=build --overwrite --ignore=\"\\.git\" --ignore=\"^/build\" --ignore=\"\\.ts$\" --ignore=\"\\.md$\" --extra-resource=utilities"
   },
   "author": "",
   "license": "ISC",
   "devDependencies": {
+    "@types/node": "^20.11.0",
+    "concurrently": "^8.2.2",
     "electron": "^28.0.0",
     "electron-builder": "^24.13.3",
-    "electron-packager": "^17.1.2"
+    "electron-packager": "^17.1.2",
+    "typescript": "~5.4.0"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

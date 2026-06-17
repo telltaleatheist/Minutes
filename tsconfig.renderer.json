@@ -1,0 +1,17 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "None",
+    "moduleResolution": "node",
+    "outDir": "dist",
+    "rootDir": ".",
+    "lib": ["DOM", "DOM.Iterable", "ES2020"],
+    "skipLibCheck": true,
+    "sourceMap": true,
+    "strict": false,
+    "noImplicitAny": false,
+    "types": []
+  },
+  "include": ["renderer.ts", "types/global.d.ts"],
+  "exclude": ["node_modules", "dist", "build"]
+}

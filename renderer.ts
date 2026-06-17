@@ -1,6 +1,10 @@
+// @ts-nocheck
 // ============================================================================
 // BOARDNOTES - RENDERER
 // ============================================================================
+// NOTE: @ts-nocheck is transitional. This legacy DOM code compiles as-is under
+// tsc; new UI (the setup wizard) will be written as properly typed TS and this
+// directive removed file-by-file as the old code is replaced.
 
 // State
 let rodecasterDirectory = '';
@@ -15,7 +19,7 @@ let config = {
   aiProvider: 'ollama',
   aiModel: 'cogito:32b',
   ollamaHost: 'http://127.0.0.1:11434',
-  whisperModel: 'base'
+  whisperModel: 'small'
 };
 
 // ============================================================================
@@ -27,15 +31,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   const savedTheme = localStorage.getItem('boardnotes-theme') || 'dark';
   document.body.setAttribute('data-theme', savedTheme);
 
-  // Load directories
+  // Load default output directory (used when saving notes)
   const dirs = await window.electronAPI.getDefaultDirectories();
   if (dirs.rodecaster) {
     rodecasterDirectory = dirs.rodecaster;
-    document.getElementById('rodecaster-dir').value = rodecasterDirectory;
   }
   if (dirs.output) {
     outputDirectory = dirs.output;
-    document.getElementById('output-dir').value = outputDirectory;
   }
 
   // Load config
@@ -93,22 +95,13 @@ function setupEventListeners() {
     tab.addEventListener('click', () => switchTab(tab.dataset.tab));
   });
 
-  // Directory browsing
-  document.getElementById('browse-rodecaster').addEventListener('click', browseRodecaster);
-  document.getElementById('browse-output').addEventListener('click', browseOutput);
-  document.getElementById('browse-audio').addEventListener('click', browseAudioFile);
-
-  // Scanning
-  document.getElementById('scan-btn').addEventListener('click', scanSources);
-  document.getElementById('load-audio-btn').addEventListener('click', loadAudioDirectly);
+  // File loading: drop zone + picker
+  setupDropZone();
 
   // Processing
   document.getElementById('transcribe-btn').addEventListener('click', transcribeAudio);
   document.getElementById('generate-btn').addEventListener('click', generateNotes);
   document.getElementById('save-btn').addEventListener('click', saveNotes);
-
-  // Audio file selection
-  document.getElementById('audio-file-select').addEventListener('change', onAudioFileSelect);
 
   // Copy buttons
   document.getElementById('copy-transcript').addEventListener('click', () => copyToClipboard(transcript, 'Transcript'));
@@ -131,8 +124,41 @@ function setupProgressListeners() {
   });
 
   window.electronAPI.onTranscriptionProgress((data) => {
-    updateProgress(data.percent, 100, data.message, 'Transcribing');
+    updateTranscriptionProgress(data);
   });
+}
+
+// Format a duration in seconds as H:MM:SS (or M:SS when under an hour).
+function formatClock(totalSeconds) {
+  const s = Math.max(0, Math.round(totalSeconds));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  const pad = (n) => String(n).padStart(2, '0');
+  return h > 0 ? `${h}:${pad(m)}:${pad(sec)}` : `${m}:${pad(sec)}`;
+}
+
+// Render real transcription progress: a moving bar, an elapsed/total clock,
+// and a live ETA. The clock updates every second via the main-process
+// heartbeat, so the user can always tell it's still working.
+function updateTranscriptionProgress(data) {
+  const percent = Math.max(0, Math.min(100, Math.round(data.percent || 0)));
+  document.getElementById('progress-fill').style.width = `${percent}%`;
+  document.getElementById('progress-percent').textContent = `${percent}%`;
+
+  let status;
+  if (data.totalSec && data.processedSec) {
+    status = `Transcribing ${formatClock(data.processedSec)} / ${formatClock(data.totalSec)}`;
+    if (data.etaSec != null && percent < 100) {
+      status += ` · ~${formatClock(data.etaSec)} left`;
+    }
+  } else if (data.elapsedSec) {
+    // Duration unknown — still show liveness via the elapsed clock.
+    status = `Transcribing · ${formatClock(data.elapsedSec)} elapsed`;
+  } else {
+    status = 'Loading Whisper model...';
+  }
+  document.getElementById('progress-status').textContent = status;
 }
 
 // ============================================================================
@@ -164,53 +190,75 @@ function switchTab(tabName) {
 }
 
 // ============================================================================
-// DIRECTORY BROWSING
+// FILE LOADING (DROP ZONE + PICKER)
 // ============================================================================
 
-async function browseRodecaster() {
-  const dir = await window.electronAPI.selectDirectory(rodecasterDirectory);
-  if (dir) {
-    rodecasterDirectory = dir;
-    document.getElementById('rodecaster-dir').value = dir;
-  }
+function setupDropZone() {
+  const dropZone = document.getElementById('drop-zone');
+  const fileInput = document.getElementById('file-input');
+
+  // Click to browse
+  dropZone.addEventListener('click', () => fileInput.click());
+  fileInput.addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if (file) loadFile(file.path);
+    fileInput.value = ''; // allow re-selecting the same file
+  });
+
+  // Drag & drop
+  dropZone.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    dropZone.classList.add('dragover');
+  });
+  ['dragleave', 'dragend'].forEach((evt) =>
+    dropZone.addEventListener(evt, () => dropZone.classList.remove('dragover'))
+  );
+  dropZone.addEventListener('drop', (e) => {
+    e.preventDefault();
+    dropZone.classList.remove('dragover');
+    const file = e.dataTransfer.files[0];
+    if (file && file.path) loadFile(file.path);
+  });
+
+  // Prevent the window from navigating when a file is dropped outside the zone
+  window.addEventListener('dragover', (e) => e.preventDefault());
+  window.addEventListener('drop', (e) => e.preventDefault());
 }
 
-async function browseOutput() {
-  const dir = await window.electronAPI.selectDirectory(outputDirectory);
-  if (dir) {
-    outputDirectory = dir;
-    document.getElementById('output-dir').value = dir;
-  }
+// Load a file and get the Generate Notes flow ready
+function loadFile(filePath) {
+  currentAudioPath = filePath;
+  const fileName = filePath.split(/[\\/]/).pop();
+
+  resetProcessState();
+  setDropZoneFile(fileName);
+  document.getElementById('transcribe-btn').disabled = false;
+
+  showToast('success', 'File Loaded', `Ready to transcribe: ${fileName}`);
 }
 
-async function browseAudioFile() {
-  const filePath = await window.electronAPI.selectAudioFile();
-  if (filePath) {
-    currentAudioPath = filePath;
-    const fileName = filePath.split('\\').pop();
-    document.getElementById('audio-file-select').innerHTML = `<option value="${filePath}">${fileName}</option>`;
-    document.getElementById('audio-file-select').value = filePath;
-    document.getElementById('transcribe-btn').disabled = false;
-    showToast('success', 'File Selected', fileName);
-  }
+// Show the loaded file inside the drop zone
+function setDropZoneFile(fileName) {
+  document.getElementById('drop-zone').innerHTML = `
+    <svg viewBox="0 0 24 24"><path d="M14 2H6c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8l-6-6zm2 16H8v-2h8v2zm0-4H8v-2h8v2zm-3-5V3.5L18.5 9H13z"/></svg>
+    <h3>${fileName}</h3>
+    <p>Click or drop to choose a different file</p>
+  `;
 }
 
-async function loadAudioDirectly() {
-  const filePath = await window.electronAPI.selectAudioFile();
-  if (filePath) {
-    currentAudioPath = filePath;
-    const fileName = filePath.split('\\').pop();
-
-    // Switch to Process tab
-    switchTab('process');
-
-    // Update the UI
-    document.getElementById('audio-file-select').innerHTML = `<option value="${filePath}">${fileName}</option>`;
-    document.getElementById('audio-file-select').value = filePath;
-    document.getElementById('transcribe-btn').disabled = false;
-
-    showToast('success', 'File Loaded', `Ready to transcribe: ${fileName}`);
-  }
+// Clear transcript/notes from any previous run when a new file is loaded
+function resetProcessState() {
+  transcript = '';
+  meetingNotes = '';
+  document.getElementById('transcript-output').innerHTML =
+    '<p class="text-tertiary">Transcript will appear here after transcription...</p>';
+  document.getElementById('notes-output').innerHTML =
+    '<p class="text-tertiary">Meeting notes will appear here after generation...</p>';
+  document.getElementById('copy-transcript').disabled = true;
+  document.getElementById('copy-notes').disabled = true;
+  document.getElementById('generate-btn').disabled = true;
+  document.getElementById('save-btn').disabled = true;
+  setStepActive(0);
 }
 
 // ============================================================================
@@ -452,35 +500,13 @@ async function transcribeAudio() {
 
   setStepActive(1);
   showProgress();
-  updateProgress(0, 100, 'Loading Whisper model...', 'Whisper');
-
-  // Start animated progress for transcription with varied messages
-  let fakeProgress = 0;
-  const progressMessages = [
-    'Loading Whisper model...',
-    'Processing audio file...',
-    'Analyzing speech patterns...',
-    'Converting speech to text...',
-    'Recognizing words...',
-    'Finalizing transcript...'
-  ];
-  let messageIndex = 0;
-
-  const progressInterval = setInterval(() => {
-    if (fakeProgress < 90) {
-      fakeProgress += Math.random() * 2;
-      // Cycle through progress messages
-      if (fakeProgress > (messageIndex + 1) * 15 && messageIndex < progressMessages.length - 1) {
-        messageIndex++;
-      }
-      updateProgress(Math.min(fakeProgress, 90), 100, progressMessages[messageIndex], 'Whisper');
-    }
-  }, 500);
+  // Real progress/ETA arrives via onTranscriptionProgress (driven by whisper's
+  // segment timestamps plus a 1s heartbeat from the main process).
+  updateTranscriptionProgress({ percent: 0 });
 
   try {
     const result = await window.electronAPI.transcribeAudio(currentAudioPath, config.whisperModel);
-    clearInterval(progressInterval);
-    updateProgress(100, 100, 'Transcription complete!', 'Whisper');
+    updateTranscriptionProgress({ percent: 100, totalSec: 1, processedSec: 1, etaSec: 0 });
 
     transcript = result.transcript;
 
@@ -492,7 +518,6 @@ async function transcribeAudio() {
 
     showToast('success', 'Transcription Complete', 'Audio has been transcribed successfully');
   } catch (error) {
-    clearInterval(progressInterval);
     showToast('error', 'Transcription Failed', error.message);
     setStepActive(0);
   } finally {
@@ -627,7 +652,10 @@ function setStepCompleted(stepNum) {
 // SETTINGS
 // ============================================================================
 
-function updateProviderUI() {
+// Cache for Ollama models
+let cachedOllamaModels = [];
+
+async function updateProviderUI() {
   const provider = document.getElementById('ai-provider').value;
   const ollamaHostGroup = document.getElementById('ollama-host-group');
   const modelSelect = document.getElementById('ai-model');
@@ -635,15 +663,8 @@ function updateProviderUI() {
   // Show/hide Ollama host
   ollamaHostGroup.classList.toggle('hidden', provider !== 'ollama');
 
-  // Update model options
-  const models = {
-    ollama: [
-      { value: 'cogito:32b', label: 'Cogito 32B (Recommended)' },
-      { value: 'cogito:14b', label: 'Cogito 14B' },
-      { value: 'cogito:8b', label: 'Cogito 8B' },
-      { value: 'qwen2.5:32b', label: 'Qwen 2.5 32B' },
-      { value: 'llama3.2:latest', label: 'Llama 3.2' }
-    ],
+  // Static model lists for cloud providers
+  const cloudModels = {
     claude: [
       { value: 'claude-3-5-sonnet', label: 'Claude 3.5 Sonnet (Recommended)' },
       { value: 'claude-3-haiku', label: 'Claude 3 Haiku (Fast)' },
@@ -656,11 +677,35 @@ function updateProviderUI() {
     ]
   };
 
-  modelSelect.innerHTML = models[provider].map(m =>
-    `<option value="${m.value}">${m.label}</option>`
-  ).join('');
+  if (provider === 'ollama') {
+    // Fetch models from Ollama
+    await refreshOllamaModels();
+  } else {
+    modelSelect.innerHTML = cloudModels[provider].map(m =>
+      `<option value="${m.value}">${m.label}</option>`
+    ).join('');
+  }
 
   config.aiProvider = provider;
+}
+
+async function refreshOllamaModels() {
+  const host = document.getElementById('ollama-host').value;
+  const modelSelect = document.getElementById('ai-model');
+
+  try {
+    const result = await window.electronAPI.checkOllama(host);
+    if (result.connected && result.models.length > 0) {
+      cachedOllamaModels = result.models;
+      modelSelect.innerHTML = result.models.map(m =>
+        `<option value="${m.id}">${m.name}</option>`
+      ).join('');
+    } else {
+      modelSelect.innerHTML = '<option value="">No models found - check Ollama connection</option>';
+    }
+  } catch (error) {
+    modelSelect.innerHTML = '<option value="">Could not connect to Ollama</option>';
+  }
 }
 
 async function checkOllama() {
@@ -673,6 +718,8 @@ async function checkOllama() {
     const result = await window.electronAPI.checkOllama(host);
     if (result.connected) {
       showToast('success', 'Connected', `Found ${result.models.length} model(s)`);
+      // Refresh the model dropdown with the fetched models
+      await refreshOllamaModels();
     } else {
       showToast('error', 'Not Connected', 'Could not connect to Ollama');
     }
