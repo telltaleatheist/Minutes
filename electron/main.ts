@@ -2,10 +2,15 @@ const { app, BrowserWindow, ipcMain, dialog, Menu, shell } = require('electron')
 const path = require('path');
 const fs = require('fs');
 const { spawn } = require('child_process');
-import { scanAudioSources, finalizeFileSet, finalizeFileSets, processDroppedFiles } from './src/audio-organizer';
-import * as componentManager from './src/components/component-manager';
-import { profile as detectSystemProfile } from './src/components/system-probe';
-import * as llamaRuntime from './src/llama-runtime';
+import { scanAudioSources, finalizeFileSet, finalizeFileSets, processDroppedFiles } from './audio-organizer';
+import * as componentManager from './components/component-manager';
+import { profile as detectSystemProfile } from './components/system-probe';
+import * as llamaRuntime from './llama-runtime';
+
+// Dev vs packaged: in dev we load the Angular dev server; packaged we load the
+// built renderer bundle. (app.isPackaged is false when running `electron .`)
+const isDev = !app.isPackaged;
+const DEV_SERVER_URL = 'http://localhost:4250';
 
 let mainWindow;
 
@@ -13,6 +18,8 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
+    backgroundColor: '#1a1a1a',
+    show: false,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -21,7 +28,19 @@ function createWindow() {
   });
 
   Menu.setApplicationMenu(null);
-  mainWindow.loadFile(path.join(__dirname, '..', 'index.html'));
+
+  // Load the Angular renderer. Dev: the ng dev-server (HMR). Packaged: the
+  // built bundle. @angular/build emits to dist/renderer/browser/index.html.
+  if (isDev) {
+    mainWindow.loadURL(DEV_SERVER_URL);
+  } else {
+    const indexPath = path.join(app.getAppPath(), 'dist', 'renderer', 'browser', 'index.html');
+    mainWindow.loadFile(indexPath).catch((err) => {
+      mainWindow?.loadURL(`data:text/html,<h2>Failed to load app</h2><pre>${String(err)}</pre>`);
+    });
+  }
+
+  mainWindow.once('ready-to-show', () => mainWindow?.show());
 
   // Open DevTools if --dev-tools flag is passed
   if (process.argv.includes('--dev-tools')) {
@@ -57,9 +76,10 @@ app.on('activate', () => {
 // ============================================================================
 
 function getUtilitiesPath() {
-  // In development, utilities are in the project root
-  // In production (packaged), they're in resources/utilities
-  const devPath = path.join(__dirname, '..', 'utilities');
+  // In development, utilities are in the project root. __dirname is
+  // dist/electron after compilation, so the project root is two levels up.
+  // In production (packaged), they're in resources/utilities.
+  const devPath = path.join(__dirname, '..', '..', 'utilities');
   const prodPath = path.join((process as any).resourcesPath || '', 'utilities');
 
   if (fs.existsSync(devPath)) {

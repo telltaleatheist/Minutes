@@ -15,35 +15,65 @@ An Electron application that transcribes meeting audio/video and generates AI-po
 
 ## Tech Stack
 
-- Electron 28
+- **Electron** (main process) + **Angular 21** (renderer) — TypeScript throughout
+- Angular: standalone components, signals, zoneless change detection, no router (single screen + overlay)
 - Whisper.cpp for transcription
-- Ollama / Claude / OpenAI for AI generation
-- Creamsicle theme (orange gradient)
+- Local llama-server / Ollama / Claude / OpenAI for AI generation
+- Creamsicle theme (orange gradient) — `src/styles.scss`
+
+## Architecture
+
+The app is split into two TypeScript builds (like the bookforge project it's modeled on):
+
+- **`electron/`** — main process, compiled by `tsconfig.electron.json` → `dist/electron/`
+  (CommonJS). Holds `main.ts`, `preload.ts`, IPC handlers, `audio-organizer.ts`,
+  `llama-runtime.ts`, and the `components/` download system.
+- **`src/`** — Angular renderer, built by the Angular CLI → `dist/renderer/browser/`.
+  The renderer never touches the DOM or `window.electronAPI` directly: components are
+  declarative templates driven by signals, and all IPC goes through
+  `core/services/electron.service.ts`.
+
+In dev, `main.ts` loads the Angular dev server (`http://localhost:4250`); when packaged
+it loads `dist/renderer/browser/index.html` (`app.isPackaged`).
 
 ## Project Structure
 
 ```
 Minutes/
-├── main.js          # Electron main process, IPC handlers
-├── preload.js       # Context bridge for renderer
-├── renderer.js      # UI logic and event handlers
-├── index.html       # Main UI
-├── styles.css       # Creamsicle theme styles
-├── src/
-│   └── audio-organizer.js  # RODECaster file scanning logic
-└── utilities/
-    ├── bin/         # Whisper binaries
-    └── models/      # Whisper models (base)
+├── electron/                  # Main process (CommonJS, tsconfig.electron.json)
+│   ├── main.ts                # BrowserWindow + IPC handlers
+│   ├── preload.ts             # contextBridge → window.electronAPI
+│   ├── audio-organizer.ts
+│   ├── llama-runtime.ts
+│   └── components/            # Component download system (catalog, manager, …)
+├── src/                       # Angular renderer
+│   ├── main.ts                # bootstrapApplication(App)
+│   ├── index.html
+│   ├── styles.scss            # Creamsicle theme (ported from styles.css)
+│   └── app/
+│       ├── app.ts             # Shell: nav + studio + overlays
+│       ├── core/
+│       │   ├── models/        # types.ts, electron-api.ts
+│       │   ├── services/      # electron, config, theme, toast, component, setup
+│       │   └── utils/         # format.ts
+│       ├── components/        # download-dock, toast-host
+│       └── features/
+│           ├── studio/        # home: drop → transcribe → generate → save
+│           └── setup/         # first-run / config wizard
+├── angular.json  tsconfig.json  tsconfig.app.json  tsconfig.electron.json
+└── utilities/                 # bin/ (whisper binaries), models/ (bundled models)
 ```
 
 ## Development
 
 ```bash
 npm install
-npm start                    # Run the app
-npm run electron:dev         # Run with logging
-npm run electron:debug       # Run with DevTools
-npm run package:win-x64      # Package for Windows
+npm start                    # build electron + ng serve + launch Electron (dev)
+npm run electron:debug       # same, with DevTools
+npm run build                # build electron + renderer (production)
+npm run build:electron       # compile electron/ only
+npm run start:web            # ng serve only (renderer in a browser)
+npm run package:win          # build + electron-builder portable .exe
 ```
 
 ## Important Notes for AI Assistants

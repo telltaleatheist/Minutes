@@ -3,46 +3,59 @@
   "productName": "Minutes",
   "version": "1.0.0",
   "description": "Transcribe meeting audio/video and generate AI meeting notes, running locally.",
-  "main": "dist/main.js",
+  "main": "dist/electron/main.js",
+  "private": true,
   "scripts": {
-    "build": "tsc -p tsconfig.electron.json && tsc -p tsconfig.renderer.json",
-    "build:watch": "concurrently \"tsc -p tsconfig.electron.json --watch\" \"tsc -p tsconfig.renderer.json --watch\"",
-    "typecheck": "tsc -p tsconfig.electron.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
-    "start": "npm run build && electron .",
-    "electron:dev": "npm run build && electron . --enable-logging",
-    "electron:debug": "npm run build && electron . --enable-logging --dev-tools",
-    "package:win-x64": "npm run build && electron-packager . Minutes --platform=win32 --arch=x64 --out=build --overwrite --ignore=\"\\.git\" --ignore=\"^/build\" --ignore=\"\\.ts$\" --ignore=\"\\.md$\" --extra-resource=utilities"
+    "ng": "ng",
+    "start": "npm run electron:dev",
+    "start:web": "ng serve --port 4250",
+    "build:renderer": "ng build",
+    "build:electron": "tsc -p tsconfig.electron.json",
+    "build": "npm run build:electron && npm run build:renderer",
+    "typecheck": "tsc -p tsconfig.electron.json --noEmit",
+    "electron:dev": "npm run build:electron && concurrently -k -n NG,ELECTRON \"ng serve --port 4250\" \"wait-on http://localhost:4250 && electron .\"",
+    "electron:debug": "npm run build:electron && concurrently -k -n NG,ELECTRON \"ng serve --port 4250\" \"wait-on http://localhost:4250 && electron . --dev-tools\"",
+    "watch:electron": "tsc -p tsconfig.electron.json --watch",
+    "package:win": "npm run build && electron-builder --win",
+    "package:win-x64": "npm run build && electron-builder --win --x64",
+    "package:mac": "npm run build && electron-builder --mac",
+    "package:mac-x64": "npm run build && electron-builder --mac --x64",
+    "package:mac-arm64": "npm run build && electron-builder --mac --arm64"
   },
   "author": "",
   "license": "ISC",
+  "dependencies": {
+    "@angular/common": "^21.0.0",
+    "@angular/compiler": "^21.0.0",
+    "@angular/core": "^21.0.0",
+    "@angular/forms": "^21.0.0",
+    "@angular/platform-browser": "^21.0.0",
+    "@angular/router": "^21.0.0",
+    "@anthropic-ai/sdk": "^0.39.0",
+    "axios": "^1.7.9",
+    "openai": "^4.77.0",
+    "rxjs": "~7.8.0",
+    "tslib": "^2.3.0"
+  },
   "devDependencies": {
+    "@angular/build": "^21.0.4",
+    "@angular/cli": "^21.0.4",
+    "@angular/compiler-cli": "^21.0.0",
     "@types/node": "^20.11.0",
     "concurrently": "^8.2.2",
     "electron": "^28.0.0",
     "electron-builder": "^24.13.3",
-    "electron-packager": "^17.1.2",
-    "typescript": "~5.4.0"
-  },
-  "dependencies": {
-    "@anthropic-ai/sdk": "^0.39.0",
-    "axios": "^1.7.9",
-    "openai": "^4.77.0"
+    "typescript": "~5.9.2",
+    "wait-on": "^7.2.0"
   },
   "build": {
     "appId": "com.minutes.app",
     "productName": "Minutes",
-    "win": {
-      "target": "portable"
-    },
-    "portable": {
-      "artifactName": "Minutes.exe"
+    "directories": {
+      "output": "build"
     },
     "files": [
-      "**/*",
-      "!**/*.py",
-      "!assets/**/*",
-      "!build/**/*",
-      "!*.md"
+      "dist/**/*"
     ],
     "extraResources": [
       {
@@ -50,8 +63,18 @@
         "to": "utilities"
       }
     ],
-    "directories": {
-      "output": "build"
+    "win": {
+      "target": "portable"
+    },
+    "portable": {
+      "artifactName": "Minutes.exe"
+    },
+    "mac": {
+      "target": "dmg",
+      "category": "public.app-category.productivity"
+    },
+    "dmg": {
+      "artifactName": "Minutes-${arch}.dmg"
     }
   }
 }

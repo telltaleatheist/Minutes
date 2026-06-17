@@ -1,6 +1,8 @@
 node_modules/
 dist/
 build/
+out-tsc/
+.angular/
 *.log
 
 # Whisper model binaries (large; downloaded/installed separately, not committed)

@@ -3,8 +3,8 @@
     "target": "ES2020",
     "module": "CommonJS",
     "moduleResolution": "node",
-    "outDir": "dist",
-    "rootDir": ".",
+    "outDir": "dist/electron",
+    "rootDir": "electron",
     "esModuleInterop": true,
     "resolveJsonModule": true,
     "skipLibCheck": true,
@@ -13,6 +13,6 @@
     "noImplicitAny": false,
     "types": ["node"]
   },
-  "include": ["main.ts", "preload.ts", "src/**/*.ts"],
-  "exclude": ["node_modules", "dist", "build", "renderer.ts"]
+  "include": ["electron/**/*.ts"],
+  "exclude": ["node_modules", "dist", "build"]
 }
