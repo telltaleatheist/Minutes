@@ -5,6 +5,7 @@ const { spawn } = require('child_process');
 import { scanAudioSources, finalizeFileSet, finalizeFileSets, processDroppedFiles } from './src/audio-organizer';
 import * as componentManager from './src/components/component-manager';
 import { profile as detectSystemProfile } from './src/components/system-probe';
+import * as llamaRuntime from './src/llama-runtime';
 
 let mainWindow;
 
@@ -38,6 +39,11 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+// Tear down the local AI server when the app exits so no orphan process lingers.
+app.on('will-quit', () => {
+  llamaRuntime.stop();
 });
 
 app.on('activate', () => {
@@ -299,16 +305,18 @@ ipcMain.handle('get-config', async () => {
     const configPath = getConfigPath();
     if (!fs.existsSync(configPath)) {
       return {
-        aiProvider: 'ollama',
-        aiModel: 'cogito:32b',
+        aiProvider: 'local',
+        localAiModel: '',
+        aiModel: '',
         ollamaHost: 'http://127.0.0.1:11434'
       };
     }
     return JSON.parse(fs.readFileSync(configPath, 'utf-8'));
   } catch (error) {
     return {
-      aiProvider: 'ollama',
-      aiModel: 'cogito:32b',
+      aiProvider: 'local',
+      localAiModel: '',
+      aiModel: '',
       ollamaHost: 'http://127.0.0.1:11434'
     };
   }
@@ -559,9 +567,9 @@ ipcMain.handle('transcribe-audio', async (event, audioPath, modelName = 'base') 
 // ============================================================================
 
 ipcMain.handle('generate-meeting-notes', async (event, transcript, config) => {
-  const { provider, model, ollamaHost } = config;
+  const { provider, model, localModel, ollamaHost } = config;
 
-  const systemPrompt = `You are an expert meeting note taker for the Secular Student Alliance board meetings.
+  const systemPrompt = `You are an expert meeting note taker.
 Your task is to create clear, organized, and comprehensive meeting notes from the provided transcript.
 
 FORMAT FOR EMAIL: The notes should be formatted for easy copying into an email. Use:
@@ -582,10 +590,12 @@ IMPORTANT: Do NOT include an "Attendees" section - the audio transcript cannot r
 Be thorough but concise. Use bullet points for clarity.
 If something is unclear in the transcript, note it as "[unclear]" rather than guessing.`;
 
-  const userPrompt = `Please create comprehensive meeting notes from the following board meeting transcript:\n\n${transcript}`;
+  const userPrompt = `Please create comprehensive meeting notes from the following meeting transcript:\n\n${transcript}`;
 
   try {
-    if (provider === 'ollama') {
+    if (provider === 'local' || !provider) {
+      return await generateWithLocal(userPrompt, systemPrompt, localModel);
+    } else if (provider === 'ollama') {
       return await generateWithOllama(userPrompt, systemPrompt, model, ollamaHost);
     } else if (provider === 'claude') {
       return await generateWithClaude(userPrompt, systemPrompt, model);
@@ -599,6 +609,33 @@ If something is unclear in the transcript, note it as "[unclear]" rather than gu
     throw error;
   }
 });
+
+async function generateWithLocal(prompt, systemPrompt, modelId) {
+  // Fall back to the first installed local model if none was explicitly chosen.
+  let resolvedId = modelId;
+  if (!resolvedId) {
+    const statuses = await componentManager.listStatus();
+    const firstAi = statuses.find(s => s.component.category === 'ai' && s.state === 'installed');
+    if (firstAi) resolvedId = firstAi.component.id;
+  }
+  if (!resolvedId) {
+    throw new Error('No local AI model is installed. Download one in setup first.');
+  }
+
+  console.log(`[AI] Generating with local engine: ${resolvedId}`);
+
+  const { text } = await llamaRuntime.chat(resolvedId, systemPrompt, prompt, {
+    maxTokens: 4000,
+    temperature: 0.7,
+  });
+
+  return {
+    success: true,
+    notes: text,
+    provider: 'local',
+    model: resolvedId,
+  };
+}
 
 async function generateWithOllama(prompt, systemPrompt, model, host) {
   const axios = require('axios');

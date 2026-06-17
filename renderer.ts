@@ -16,8 +16,8 @@ let currentAudioPath = '';
 
 // Config
 let config = {
-  aiProvider: 'ollama',
-  aiModel: 'cogito:32b',
+  aiProvider: 'local',
+  aiModel: '',
   ollamaHost: 'http://127.0.0.1:11434',
   whisperModel: 'base',
   localAiModel: '',
@@ -330,7 +330,7 @@ function renderFileSets() {
           <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z"/>
         </svg>
         <h3>No Audio Files Found</h3>
-        <p>Select your RODECaster directory and click "Scan Sources" to find board meeting recordings.</p>
+        <p>Select your RODECaster directory and click "Scan Sources" to find meeting recordings.</p>
       </div>
     `;
     return;
@@ -595,6 +595,7 @@ async function generateNotes() {
     const result = await window.electronAPI.generateMeetingNotes(transcript, {
       provider: config.aiProvider,
       model: config.aiModel,
+      localModel: config.localAiModel,
       ollamaHost: config.ollamaHost
     });
 
@@ -632,7 +633,7 @@ async function saveNotes() {
   }
 
   const date = new Date().toISOString().split('T')[0];
-  const filename = `SSA Board Meeting Notes - ${date}.md`;
+  const filename = `Meeting Notes - ${date}.md`;
   const outputPath = `${outputDirectory}/${filename}`;
 
   try {
