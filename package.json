@@ -64,10 +64,22 @@
       }
     ],
     "win": {
-      "target": "portable"
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Minutes",
+      "artifactName": "Minutes-Setup-${version}.exe"
     },
     "portable": {
-      "artifactName": "Minutes.exe"
+      "artifactName": "Minutes-Portable.exe"
     },
     "mac": {
       "target": "dmg",
