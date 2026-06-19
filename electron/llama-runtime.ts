@@ -32,7 +32,7 @@ const CTX_OUTPUT_RESERVE = 4096; // room for the generated notes + a little slac
  *  plus room for the response, clamped and rounded up. ~3.5 chars/token is a
  *  deliberately conservative (over-)estimate so the transcript isn't truncated;
  *  no tokenizer is available in the main process. */
-function estimateCtxSize(systemPrompt: string, userPrompt: string, maxTokens = 4000): number {
+export function estimateCtxSize(systemPrompt: string, userPrompt: string, maxTokens = 4000): number {
   const promptTokens = Math.ceil((systemPrompt.length + userPrompt.length) / 3.5);
   const needed = promptTokens + Math.max(maxTokens, CTX_OUTPUT_RESERVE) + 512;
   const clamped = Math.min(MAX_CTX_SIZE, Math.max(MIN_CTX_SIZE, needed));

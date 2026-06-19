@@ -325,6 +325,107 @@ select.form-control {
   cursor: pointer;
 }
 
+/* Chip / tag input ---------------------------------------------------------- */
+.chip-input {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.375rem;
+  width: 100%;
+  min-height: 2.5rem;
+  padding: 0.375rem 0.5rem;
+  background: var(--bg-secondary);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  cursor: text;
+  transition: border-color 150ms ease;
+}
+
+.chip-input:focus-within {
+  border-color: var(--primary-orange);
+  box-shadow: 0 0 0 3px rgba(255, 107, 53, 0.1);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.25rem 0.2rem 0.6rem;
+  font-size: 0.8125rem;
+  line-height: 1;
+  color: #fff;
+  background: var(--primary-orange);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.chip-x {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.05rem;
+  height: 1.05rem;
+  padding: 0;
+  font-size: 0.9rem;
+  line-height: 1;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.18);
+  border: none;
+  border-radius: 999px;
+  cursor: pointer;
+  transition: background 120ms ease;
+}
+
+.chip-x:hover {
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.chip-text {
+  flex: 1;
+  min-width: 6rem;
+  padding: 0.25rem;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  background: transparent;
+  border: none;
+  outline: none;
+}
+
+.chip-text::placeholder {
+  color: var(--text-tertiary);
+}
+
+/* Attendee-list editor (Settings) ------------------------------------------ */
+.attendee-group {
+  display: grid;
+  grid-template-columns: minmax(8rem, 12rem) 1fr auto;
+  align-items: start;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
+
+.attendee-group-name {
+  align-self: stretch;
+}
+
+/* Participants row (main screen): load picker + chips --------------------- */
+.participants-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+}
+
+.participants-load {
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 11rem;
+  cursor: pointer;
+}
+
+.participants-chips {
+  flex: 1;
+}
+
 /* ============================================================================
    FILE SETS GRID
    ============================================================================ */

@@ -11,7 +11,8 @@ import { ElectronService } from '../../core/services/electron.service';
 import { ModelsService } from '../../core/services/models.service';
 import { ComponentService } from '../../core/services/component.service';
 import { ToastService } from '../../core/services/toast.service';
-import { AppConfig, DEFAULT_NOTES_PROMPT } from '../../core/models/types';
+import { AppConfig, DEFAULT_NOTES_PROMPT, ParticipantGroup } from '../../core/models/types';
+import { ChipInputComponent } from '../../components/chip-input.component';
 
 /**
  * Settings overlay — a single page for the defaults the app runs with: the AI
@@ -22,6 +23,7 @@ import { AppConfig, DEFAULT_NOTES_PROMPT } from '../../core/models/types';
 @Component({
   selector: 'app-settings',
   standalone: true,
+  imports: [ChipInputComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     @if (setup.settingsOpen()) {
@@ -119,6 +121,37 @@ import { AppConfig, DEFAULT_NOTES_PROMPT } from '../../core/models/types';
               </div>
             </div>
 
+            <!-- Attendee lists -->
+            <div class="settings-section">
+              <div class="settings-section-title">
+                Attendee lists
+                <button class="btn btn-ghost btn-sm" (click)="addGroup()">+ Add list</button>
+              </div>
+              <p class="sub">Save sets of people you meet with (e.g. "Development Committee", "Full Board"). On the main screen you load a list, then click anyone's chip to drop them if they're absent. Action items are only attributed to the loaded names — anyone else (e.g. transcription mishearings) is left unattributed.</p>
+              @for (g of groups(); track g.id) {
+                <div class="attendee-group">
+                  <input
+                    class="form-control attendee-group-name"
+                    placeholder="List name (e.g. Full Board)"
+                    [value]="g.name"
+                    (input)="setGroupName(g.id, $any($event.target).value)"
+                  />
+                  <app-chip-input
+                    placeholder="Type a name, then Enter…"
+                    [value]="g.members"
+                    (valueChange)="setGroupMembers(g.id, $event)"
+                  />
+                  <button class="btn btn-ghost btn-icon" title="Delete list" (click)="removeGroup(g.id)">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor">
+                      <path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" />
+                    </svg>
+                  </button>
+                </div>
+              } @empty {
+                <p class="sub">No lists yet — click "Add list" to create one.</p>
+              }
+            </div>
+
             <!-- Notes prompt -->
             <div class="settings-section">
               <div class="settings-section-title">
@@ -166,6 +199,7 @@ export class SettingsComponent {
   readonly ollamaHost = signal('http://127.0.0.1:11434');
   readonly useGpu = signal(false);
   readonly notesPrompt = signal('');
+  readonly groups = signal<ParticipantGroup[]>([]);
 
   readonly claudeConfigured = signal(false);
   readonly openaiConfigured = signal(false);
@@ -187,6 +221,7 @@ export class SettingsComponent {
     this.ollamaHost.set(cfg.ollamaHost);
     this.useGpu.set(cfg.useGpu);
     this.notesPrompt.set(cfg.notesPrompt || DEFAULT_NOTES_PROMPT);
+    this.groups.set((cfg.participantGroups ?? []).map((g) => ({ ...g })));
     void this.models.refreshOllama(cfg.ollamaHost);
     void this.loadApiKeys();
   }
@@ -242,6 +277,20 @@ export class SettingsComponent {
     }
   }
 
+  // ─── Attendee lists ──────────────────────────────────────────────────────────
+  addGroup(): void {
+    this.groups.update((gs) => [...gs, { id: crypto.randomUUID(), name: '', members: '' }]);
+  }
+  removeGroup(id: string): void {
+    this.groups.update((gs) => gs.filter((g) => g.id !== id));
+  }
+  setGroupName(id: string, name: string): void {
+    this.groups.update((gs) => gs.map((g) => (g.id === id ? { ...g, name } : g)));
+  }
+  setGroupMembers(id: string, members: string): void {
+    this.groups.update((gs) => gs.map((g) => (g.id === id ? { ...g, members } : g)));
+  }
+
   // ─── Prompt ──────────────────────────────────────────────────────────────────
   resetPrompt(): void {
     this.notesPrompt.set(DEFAULT_NOTES_PROMPT);
@@ -258,6 +307,10 @@ export class SettingsComponent {
       // Persist the prompt only when it differs from the built-in default, so a
       // future change to the default still reaches users who never edited it.
       notesPrompt: prompt === DEFAULT_NOTES_PROMPT.trim() ? '' : prompt,
+      // Drop blank lists (no name and no members) so accidental empties don't pile up.
+      participantGroups: this.groups()
+        .map((g) => ({ ...g, name: g.name.trim(), members: g.members.trim() }))
+        .filter((g) => g.name || g.members),
     };
     await this.config.save(patch);
     this.toast.show('success', 'Saved', 'Settings saved');

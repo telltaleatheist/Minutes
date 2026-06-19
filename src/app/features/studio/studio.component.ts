@@ -13,6 +13,7 @@ import { ModelsService } from '../../core/services/models.service';
 import { ToastService } from '../../core/services/toast.service';
 import { GenerationProgress, TranscriptionProgress } from '../../core/models/types';
 import { formatClock } from '../../core/utils/format';
+import { ChipInputComponent } from '../../components/chip-input.component';
 
 const ACCEPT = '.wav,.mp3,.m4a,.flac,.ogg,.aac,.wma,.mp4,.mov,.mkv,.webm,.avi';
 
@@ -23,6 +24,7 @@ const ACCEPT = '.wav,.mp3,.m4a,.flac,.ogg,.aac,.wma,.mp4,.mov,.mkv,.webm,.avi';
 @Component({
   selector: 'app-studio',
   standalone: true,
+  imports: [ChipInputComponent],
   changeDetection: ChangeDetectionStrategy.OnPush,
   template: `
     <input
@@ -80,6 +82,26 @@ const ACCEPT = '.wav,.mp3,.m4a,.flac,.ogg,.aac,.wma,.mp4,.mov,.mkv,.webm,.avi';
               <option value="">No AI models available</option>
             }
           </select>
+        </div>
+      </div>
+
+      <div class="form-group mt-2">
+        <label class="form-label">Participants <span class="text-tertiary">(optional — names that can own action items)</span></label>
+        <div class="participants-row">
+          @if ((config.config().participantGroups ?? []).length) {
+            <select class="form-control participants-load" [value]="groupPick()" (change)="loadGroup($any($event.target).value)">
+              <option value="">Load a saved list…</option>
+              @for (g of config.config().participantGroups; track g.id) {
+                <option [value]="g.id">{{ g.name || 'Untitled list' }}</option>
+              }
+            </select>
+          }
+          <app-chip-input
+            class="participants-chips"
+            placeholder="Type a name, then Enter…"
+            [value]="participants()"
+            (valueChange)="onParticipantsInput($event)"
+          />
         </div>
       </div>
 
@@ -188,7 +210,7 @@ const ACCEPT = '.wav,.mp3,.m4a,.flac,.ogg,.aac,.wma,.mp4,.mov,.mkv,.webm,.avi';
 })
 export class StudioComponent implements OnInit {
   private readonly electron = inject(ElectronService);
-  private readonly config = inject(ConfigService);
+  protected readonly config = inject(ConfigService);
   readonly models = inject(ModelsService);
   private readonly toast = inject(ToastService);
   private readonly destroyRef = inject(DestroyRef);
@@ -204,6 +226,20 @@ export class StudioComponent implements OnInit {
   }
   onAiChange(value: string): void {
     void this.config.save(this.models.patchForAi(value));
+  }
+
+  // Per-meeting roster: starts empty; the user loads a saved attendee list (below)
+  // and/or types names directly, then trims anyone absent by removing chips.
+  readonly participants = signal('');
+  readonly groupPick = signal('');
+  onParticipantsInput(value: string): void {
+    this.participants.set(value);
+  }
+  /** Load a saved attendee list into the chips, then reset the picker. */
+  loadGroup(id: string): void {
+    const group = (this.config.config().participantGroups ?? []).find((g) => g.id === id);
+    if (group) this.participants.set(group.members);
+    this.groupPick.set(''); // snap the picker back so the same list can be re-loaded
   }
 
   readonly currentAudioPath = signal('');
@@ -337,6 +373,7 @@ export class StudioComponent implements OnInit {
         ollamaHost: cfg.ollamaHost,
         systemPrompt: cfg.notesPrompt,
         useGpu: cfg.useGpu,
+        participants: this.participants(),
       });
       this.generateMs.set(Date.now() - start);
       this.progressPercent.set(100);

@@ -706,7 +706,7 @@ ipcMain.handle('transcribe-audio', async (event, audioPath, modelName = 'base', 
 // from the Settings page (persisted as config.notesPrompt). Mirrored in the
 // renderer (src/app/core/models/types.ts DEFAULT_NOTES_PROMPT) so Settings can
 // show and reset it — keep the two copies in sync.
-const DEFAULT_NOTES_PROMPT = `You are an expert meeting-notes writer. You will be given notes extracted from a meeting, organized by topic. Combine them into a single, clear set of meeting minutes.
+const DEFAULT_NOTES_PROMPT = `You are an expert meeting-notes writer. You will be given notes already extracted from a meeting, organized by topic and pre-sorted into labeled parts (Summary, Key points, Open questions, Action items, Decisions). Combine them into a single, clear set of meeting minutes.
 
 FORMAT FOR EMAIL: format for easy copying into an email — clear section headers, bullet points (•) for lists, indentation for sub-items, and a blank line between sections.
 
@@ -714,20 +714,35 @@ Structure the minutes as:
 1. SUMMARY — a 2-4 sentence overview of the whole meeting
 2. KEY DISCUSSION POINTS — the main topics discussed, organized by topic
 3. ACTION ITEMS — consolidated across the meeting, with an owner only when the words name one; merge duplicates
-4. DECISIONS MADE — only decisions or agreements the group EXPLICITLY reached
-5. FOLLOW-UP ITEMS — open questions or things to revisit later
+4. DECISIONS MADE — only items the extracts explicitly labeled as "Decisions"
+5. FOLLOW-UP ITEMS — open questions and things to revisit (draw these from the extracts' "Open questions")
 
 Rules:
 - Use only information present in the provided notes. Do not infer or invent.
-- A decision is only something the group clearly agreed on or settled. Anything merely proposed, debated, pushed back on, or left unresolved is NOT a decision — keep it under Key Discussion Points. If nothing was firmly decided, omit DECISIONS MADE entirely.
-- Follow-up items are open questions or things to revisit — do not repeat anything already listed as an Action Item.
-- The transcript does not identify speakers. Give an action item an owner only when the words explicitly name who is responsible ("Kevin will…", "Owen, can you…"). Never infer the speaker; if no name is given, leave the item unattributed.
+- TRUST THE CLASSIFICATION. The extracts already sorted content into parts. Keep it sorted: something listed under "Key points" or "Open questions" is NOT a decision — never upgrade it. Route every extracted "Open questions" item to FOLLOW-UP ITEMS, not DECISIONS.
+- DECISIONS MADE must contain ONLY items that appear under a "Decisions:" label in the extracts. Most meetings have very few, or none. If the extracts contain no decisions, omit DECISIONS MADE entirely. Never manufacture a decision out of discussion.
+- A decision is a choice to act or a commitment the group settled on — NOT a clarification, a fact, a status update, or a goal someone floated. Keep those under KEY DISCUSSION POINTS.
+- Do not list the same item under both DECISIONS MADE and FOLLOW-UP ITEMS. Each item belongs in exactly one place.
+- PRESERVE each speaker's stance. If the notes say someone was not worried about something, keep it that way — never flip it into the opposite.
+- An action item is a task someone committed to do. Do NOT list floated ideas ("consider…", "look into…", "we could…", "maybe…") as action items — those belong under KEY DISCUSSION POINTS or FOLLOW-UP ITEMS.
+- The transcript does not identify speakers. Give an action item an owner only when the words explicitly name who is responsible ("Kevin will…", "Owen, can you…"). Never infer the speaker; a WRONG owner is worse than none, so if no name is clearly given, leave the item unattributed.
+- Do not attribute a statement, opinion, or past action to a named person in SUMMARY or KEY DISCUSSION POINTS unless the notes clearly name who said it. Prefer neutral phrasing ("a member noted…", "someone reached out…"). A name appearing near a remark does not mean that person made it.
+- Keep FOLLOW-UP ITEMS tight: merge questions that ask the same thing, and never list the same open question more than once.
 - Omit any section that has no content — do not write "None".
 - Do not include an "Attendees" section.
 - Output only the meeting notes — no preamble or commentary (e.g. do not begin with "Here are the notes").`;
 
 ipcMain.handle('generate-meeting-notes', async (event, transcript, config) => {
-  const { provider, model, localModel, ollamaHost, systemPrompt: customPrompt, useGpu } = config;
+  const { provider, model, localModel, ollamaHost, systemPrompt: customPrompt, useGpu, participants } = config;
+
+  ollamaCtxFloor = 0; // reset the per-run Ollama context high-water mark
+  ollamaNumGpu = undefined; // re-decide GPU layer placement for this run
+
+  // Split the roster on commas / newlines / semicolons into clean names.
+  const roster: string[] = String(participants || '')
+    .split(/[,;\n]+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
 
   // The user's saved prompt (else the built-in default) is the per-topic
   // meeting-notes generator. The topic-finding/orchestration prompts live in
@@ -749,13 +764,93 @@ ipcMain.handle('generate-meeting-notes', async (event, transcript, config) => {
   };
 
   try {
-    const notes = await synthesizeNotes(transcript, notesPrompt, callModel, onProgress);
+    const notes = await synthesizeNotes(transcript, notesPrompt, callModel, onProgress, roster);
     return { success: true, notes, provider: provider || 'local', model: localModel || model || '' };
   } catch (error) {
     console.error('Error generating meeting notes:', error);
     throw error;
+  } finally {
+    // Release the model once generation is done so it isn't left resident holding
+    // VRAM/RAM. Cloud providers (claude/openai) have nothing local to free.
+    if (provider === 'local' || !provider) {
+      console.log('[AI] Generation finished — releasing local model from memory');
+      llamaRuntime.stop();
+    } else if (provider === 'ollama') {
+      console.log('[AI] Generation finished — asking Ollama to unload the model');
+      await unloadOllamaModel(model, ollamaHost).catch((e) =>
+        console.warn('[AI] Ollama unload failed:', e?.message || e),
+      );
+    }
   }
 });
+
+// Per-run high-water mark for the Ollama context window. Kept module-level (only
+// one generation runs at a time) and reset at the start of each generation so a
+// large run doesn't pin a big context for the next one.
+let ollamaCtxFloor = 0;
+// Per-run GPU layer count for Ollama. `undefined` = not yet decided; `null` = let
+// Ollama auto-place; a number = force that many layers onto the GPU. Only ever
+// decreases within a run (the retry-on-OOM loop pushes more layers to the CPU).
+let ollamaNumGpu: number | null | undefined;
+
+/** Rough parameter count (billions) parsed from a model name/tag: "cogito:32b" → 32. */
+function modelParamsB(name) {
+  const m = /(\d+(?:\.\d+)?)\s*b\b/i.exec(String(name || ''));
+  return m ? parseFloat(m[1]) : null;
+}
+
+/** Rough transformer layer count from parameter size, for GPU-offload planning. */
+function layersForParams(b) {
+  if (b <= 4) return 28;
+  if (b <= 9) return 32;
+  if (b <= 15) return 48;
+  if (b <= 35) return 64;
+  if (b <= 80) return 80;
+  return 96;
+}
+
+/**
+ * Automatic memory plan for an Ollama run. The hard constraint on a GPU is that
+ * weights + KV cache + compute all share VRAM — counting system RAM as if it
+ * helps is wrong. So we budget VRAM explicitly: reserve room for the desktop and
+ * compute, size the KV cache for the chosen context, and if the full weights then
+ * don't fit, tell Ollama to offload just enough layers to the CPU (`num_gpu`) so
+ * it fits instead of crashing. A few CPU layers = a bit slower, never an OOM.
+ * Returns { numCtx, numGpu } — numGpu null means "let Ollama decide" (fits fully).
+ */
+function planOllamaMemory(prof, modelName, neededCtx) {
+  const b = modelParamsB(modelName);
+  const vramGB = (prof?.cuda?.vramMB || 0) / 1024;
+  const numCtx = Math.min(neededCtx, 16384);
+  if (b == null || vramGB <= 0) return { numCtx, numGpu: null }; // unknown → don't micromanage
+
+  const weightsGB = b * 0.6;             // Q4 weights
+  const kvMBPerTok = 0.008 * b;          // ~0.25 MB/token for a 32B GQA model
+  const kvGB = (numCtx * kvMBPerTok) / 1024;
+  const effectiveVram = Math.max(0, vramGB - 3); // reserve ~3 GB for desktop / other apps
+  const gpuWeightBudget = effectiveVram - kvGB - 2; // ~2 GB compute buffer
+
+  // This is only a STARTING estimate — generateWithOllama retries with fewer GPU
+  // layers if it turns out to be too optimistic, so we don't over-offload here.
+  let numGpu = null;
+  if (gpuWeightBudget >= weightsGB) {
+    numGpu = null; // all layers fit on the GPU alongside the KV cache
+  } else if (gpuWeightBudget > 0) {
+    const total = layersForParams(b);
+    numGpu = Math.max(0, Math.floor((gpuWeightBudget / weightsGB) * total) - 1); // -1 safety
+  } else {
+    numGpu = 0; // weights alone don't fit → run on CPU (slow but won't crash)
+  }
+  return { numCtx, numGpu };
+}
+
+/** Tell Ollama to unload a model from memory immediately (keep_alive: 0). */
+async function unloadOllamaModel(model, host) {
+  if (!model) return;
+  const axios = require('axios');
+  const ollamaHost = host || 'http://127.0.0.1:11434';
+  await axios.post(`${ollamaHost}/api/generate`, { model, keep_alive: 0 }, { timeout: 15000 });
+}
 
 async function generateWithLocal(prompt, systemPrompt, modelId, useGpu = false) {
   // Fall back to the first installed local model if none was explicitly chosen.
@@ -785,28 +880,78 @@ async function generateWithLocal(prompt, systemPrompt, modelId, useGpu = false) 
   };
 }
 
+function isOllamaMemoryError(detail: string): boolean {
+  return /bad_alloc|out of memory|cudamalloc|failed to allocate|insufficient|ggml_assert|mem_buffer|has terminated|0xc000|stack-based buffer/i.test(
+    detail,
+  );
+}
+
+/** Log what Ollama actually placed where (GPU vs CPU) — the measured reality, not our estimate. */
+async function logOllamaPlacement(host: string, model: string): Promise<void> {
+  try {
+    const axios = require('axios');
+    const r = await axios.get(`${host}/api/ps`, { timeout: 5000 });
+    const m = (r.data?.models || []).find((x: any) => x.name === model || x.model === model);
+    if (m && m.size) {
+      const pct = Math.round((m.size_vram / m.size) * 100);
+      console.log(
+        `[AI] Ollama placement: ${model} ${(m.size / 1e9).toFixed(1)}GB total, ${(m.size_vram / 1e9).toFixed(1)}GB in VRAM (${pct}% on GPU)`,
+      );
+    }
+  } catch {
+    /* /api/ps is best-effort visibility only */
+  }
+}
+
 async function generateWithOllama(prompt, systemPrompt, model, host) {
   const axios = require('axios');
   const ollamaHost = host || 'http://127.0.0.1:11434';
 
-  console.log(`[AI] Generating with Ollama: ${model}`);
+  // Size context to the prompt's actual need (else Ollama uses the full trained
+  // context, e.g. 32k), but never shrink within a run — Ollama reloads on any
+  // num_ctx change, so use a per-run high-water mark.
+  const prof = await detectSystemProfile().catch(() => null);
+  const need = llamaRuntime.estimateCtxSize(systemPrompt, prompt, 4000);
+  ollamaCtxFloor = Math.max(ollamaCtxFloor, Math.min(need, 16384));
+  const numCtx = ollamaCtxFloor;
 
-  const response = await axios.post(`${ollamaHost}/api/generate`, {
-    model: model,
-    prompt: `${systemPrompt}\n\n${prompt}`,
-    stream: false,
-    options: {
-      temperature: 0.7,
-      num_predict: 4000
+  // Initialise the per-run GPU layer count from an estimate the first time, then
+  // let the retry loop below correct it downward if reality disagrees.
+  const b = modelParamsB(model);
+  const totalLayers = b ? layersForParams(b) : 40;
+  if (ollamaNumGpu === undefined) ollamaNumGpu = planOllamaMemory(prof, model, numCtx).numGpu;
+
+  const body = `${systemPrompt}\n\n${prompt}`;
+  for (;;) {
+    const options: Record<string, number> = { temperature: 0.7, num_predict: 4000, num_ctx: numCtx };
+    if (ollamaNumGpu != null) options.num_gpu = ollamaNumGpu;
+    console.log(`[AI] Generating with Ollama: ${model} (num_ctx=${numCtx}, num_gpu=${ollamaNumGpu ?? 'auto'})`);
+    try {
+      const response = await axios.post(
+        `${ollamaHost}/api/generate`,
+        { model, prompt: body, stream: false, options },
+        { timeout: 600000 },
+      );
+      await logOllamaPlacement(ollamaHost, model);
+      return { success: true, notes: response.data.response, provider: 'ollama', model };
+    } catch (err) {
+      const detail = err?.response?.data?.error || err?.message || String(err);
+      if (!isOllamaMemoryError(detail)) throw new Error(`Ollama request failed: ${detail}`);
+
+      // Out of memory: pull more layers onto the CPU and retry. Self-corrects for
+      // bad estimates / parallel KV slots without crashing the whole generation.
+      const current = ollamaNumGpu == null ? totalLayers : ollamaNumGpu;
+      if (current > 0) {
+        ollamaNumGpu = Math.max(0, Math.floor(current * 0.6) - 1);
+        console.warn(`[AI] Ollama out of memory — retrying with fewer GPU layers (num_gpu=${ollamaNumGpu})`);
+        continue;
+      }
+      // Already CPU-only and still failing → genuinely can't fit.
+      throw new Error(
+        `Ollama ran out of memory running "${model}", even with the model on the CPU. It's too large for this machine's RAM. Use a smaller model, or increase your Windows page file size (System → Advanced → Performance → Virtual memory).`,
+      );
     }
-  }, { timeout: 600000 }); // 10 minute timeout
-
-  return {
-    success: true,
-    notes: response.data.response,
-    provider: 'ollama',
-    model: model
-  };
+  }
 }
 
 async function generateWithClaude(prompt, systemPrompt, model) {

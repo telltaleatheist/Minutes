@@ -78,16 +78,19 @@ export class ModelsService {
     return mph >= 10 ? String(Math.round(mph)) : String(Math.round(mph * 10) / 10);
   }
 
-  /** Every AI model the user can pick right now, across providers. */
+  /** Every AI model the user can pick right now, across providers. Local/Ollama
+   *  labels carry a plain-language speed hint based on the model size vs. this
+   *  machine's VRAM/RAM, so a non-technical user can tell what their box can run. */
   readonly aiChoices = computed<AiChoice[]>(() => {
     const out: AiChoice[] = [];
     for (const s of this.components.byCategory('ai')) {
       if (s.state === 'installed') {
-        out.push({ value: `local:${s.component.id}`, label: `${s.component.name} (Local)`, provider: 'local', model: s.component.id });
+        const gb = s.component.sizeBytes ? s.component.sizeBytes / 1e9 : this.weightsGB(s.component.name);
+        out.push({ value: `local:${s.component.id}`, label: this.withHint(`${s.component.name} (Local)`, gb), provider: 'local', model: s.component.id });
       }
     }
     for (const m of this.ollamaModels()) {
-      out.push({ value: `ollama:${m.id}`, label: `${m.name} (Ollama)`, provider: 'ollama', model: m.id });
+      out.push({ value: `ollama:${m.id}`, label: this.withHint(`${m.name} (Ollama)`, this.weightsGB(m.name || m.id)), provider: 'ollama', model: m.id });
     }
     for (const m of CLOUD_MODELS.claude) {
       out.push({ value: `claude:${m.value}`, label: `${m.label} (Claude)`, provider: 'claude', model: m.value });
@@ -97,6 +100,28 @@ export class ModelsService {
     }
     return out;
   });
+
+  /** Estimated Q4 weight footprint (GB) from a model name's parameter count. */
+  private weightsGB(name: string): number | null {
+    const m = /(\d+(?:\.\d+)?)\s*b\b/i.exec(name || '');
+    return m ? parseFloat(m[1]) * 0.6 : null;
+  }
+
+  /** Append a plain-language speed hint to a label, judged against detected VRAM/RAM. */
+  private withHint(label: string, weightsGB: number | null): string {
+    if (weightsGB == null) return label;
+    const sys = this.components.system();
+    if (!sys) return label;
+    const vramGB = (sys.cuda?.vramMB || 0) / 1024;
+    const ramGB = (sys.ramMB || 0) / 1024;
+    let hint: string;
+    // "Fast" needs real headroom for the KV cache + compute alongside the weights
+    // on the GPU — not just barely fitting the weights. ~6 GB covers our context.
+    if (weightsGB + 6 <= vramGB) hint = 'Fast';
+    else if (weightsGB + 2 <= vramGB + ramGB) hint = 'Slower — uses memory';
+    else hint = 'Very slow — may not fit';
+    return `${label} · ${hint}`;
+  }
 
   /** The unified value for the model the config currently points at. */
   currentAiValue(cfg: AppConfig): string {
