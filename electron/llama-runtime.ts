@@ -117,9 +117,15 @@ async function startServer(modelId: string): Promise<RunningServer> {
 
   console.log(`[LLAMA] Starting ${engine.cuda ? 'CUDA' : 'CPU'} server: ${modelId} on port ${port}`);
 
+  const engineDir = path.dirname(engine.exe);
+  // sibling ggml/cublas/cudart DLLs (Windows) or .dylib files (macOS) must resolve.
+  const env = process.platform === 'darwin'
+    ? { ...process.env, DYLD_FALLBACK_LIBRARY_PATH: [engineDir, process.env.DYLD_FALLBACK_LIBRARY_PATH].filter(Boolean).join(':') }
+    : process.env;
   const proc = spawn(engine.exe, args, {
-    cwd: path.dirname(engine.exe), // sibling ggml/cublas/cudart DLLs must resolve
+    cwd: engineDir,
     windowsHide: true,
+    env,
   });
 
   proc.stdout?.on('data', (d) => console.log(`[llama-server] ${String(d).trim()}`));

@@ -45,6 +45,11 @@ export interface ComponentArtifact {
   /** 'file': filename to save as (defaults to the URL basename).
    *  'archive': not used for saving — see OptionalComponent.entryPath. */
   fileName?: string;
+  /** Per-artifact entry path inside the archive, relative to the install dir.
+   *  Overrides OptionalComponent.entryPath. Needed when the executable's name
+   *  differs by platform/arch (e.g. whisper-cli-arm64 vs whisper-cli.exe) or is
+   *  nested in a subfolder. */
+  entry?: string;
 }
 
 export interface OptionalComponent {

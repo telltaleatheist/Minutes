@@ -194,10 +194,12 @@ export async function install(
             /* ignore */
           }
         }
-        // Resolve the entry: prefer installDir/entryPath, else find by basename
-        // (archives often nest the binary under a versioned folder).
-        const direct = path.join(installDir, component.entryPath);
-        const wantBase = path.basename(component.entryPath).toLowerCase();
+        // Resolve the entry: prefer the artifact's own entry (its name/location
+        // can differ per platform+arch), else the component default; fall back to
+        // a basename search (archives often nest the binary under a subfolder).
+        const entryRel = artifact.entry || component.entryPath;
+        const direct = path.join(installDir, entryRel);
+        const wantBase = path.basename(entryRel).toLowerCase();
         entryAbs = fs.existsSync(direct)
           ? direct
           : findFile(installDir, (f) => f.toLowerCase() === wantBase) || direct;
@@ -207,6 +209,17 @@ export async function install(
     if (ac.signal.aborted) throw new Error('Install cancelled');
     if (!fs.existsSync(entryAbs)) {
       throw new Error(`Entry not found after install: ${component.entryPath}`);
+    }
+
+    // macOS/Linux: ensure the extracted binary is executable. tar -xzf usually
+    // preserves the mode, but downloaded-then-extracted files can lose it, and a
+    // model 'file' artifact is fine to chmod harmlessly too.
+    if (process.platform !== 'win32') {
+      try {
+        fs.chmodSync(entryAbs, 0o755);
+      } catch (err) {
+        console.warn(`[COMPONENTS] Could not chmod ${entryAbs}:`, err);
+      }
     }
 
     const record: InstalledRecord = {
