@@ -1,37 +1,23 @@
 import {
   ChangeDetectionStrategy,
   Component,
-  computed,
   effect,
   inject,
   signal,
 } from '@angular/core';
 import { SetupService } from '../../core/services/setup.service';
-import { ComponentService } from '../../core/services/component.service';
 import { ConfigService } from '../../core/services/config.service';
 import { ElectronService } from '../../core/services/electron.service';
+import { ModelsService } from '../../core/services/models.service';
+import { ComponentService } from '../../core/services/component.service';
 import { ToastService } from '../../core/services/toast.service';
-import { AiProvider, AppConfig, DEFAULT_NOTES_PROMPT } from '../../core/models/types';
-
-const CLOUD_MODELS: Record<'claude' | 'openai', { value: string; label: string }[]> = {
-  claude: [
-    { value: 'claude-3-5-sonnet', label: 'Claude 3.5 Sonnet (Recommended)' },
-    { value: 'claude-3-haiku', label: 'Claude 3 Haiku (Fast)' },
-    { value: 'claude-3-opus', label: 'Claude 3 Opus (Best)' },
-  ],
-  openai: [
-    { value: 'gpt-4o', label: 'GPT-4o (Recommended)' },
-    { value: 'gpt-4o-mini', label: 'GPT-4o Mini (Fast)' },
-    { value: 'gpt-4-turbo', label: 'GPT-4 Turbo' },
-  ],
-};
+import { AppConfig, DEFAULT_NOTES_PROMPT } from '../../core/models/types';
 
 /**
- * Settings overlay — a single page for picking the defaults the app runs with:
- * which AI provider/model, which transcription model, CPU vs GPU, API keys, and
- * the meeting-notes prompt. Distinct from the download wizard (which is for
- * browsing & downloading component options); a "Manage downloads" button links
- * across to it.
+ * Settings overlay — a single page for the defaults the app runs with: the AI
+ * model (one unified picker across local/Ollama/cloud), the transcription
+ * model, CPU vs GPU, connections (Ollama host + API keys), and the notes
+ * prompt. Separate from the download wizard ("Manage downloads" links across).
  */
 @Component({
   selector: 'app-settings',
@@ -53,24 +39,25 @@ const CLOUD_MODELS: Record<'claude' | 'openai', { value: string; label: string }
           </div>
 
           <div class="setup-card-body">
-            <!-- Defaults: what the app uses out of the box -->
+            <!-- The defaults that drive a run -->
             <div class="settings-section">
               <div class="settings-section-title">Defaults</div>
               <div class="settings-grid">
                 <div class="form-group">
-                  <label class="form-label">Transcription model (Whisper)</label>
-                  <select class="form-control" [value]="whisperModel()" (change)="whisperModel.set($any($event.target).value)">
-                    @for (o of whisperOptions(); track o.value) {
+                  <label class="form-label">AI model</label>
+                  <select class="form-control" [value]="aiChoice()" (change)="aiChoice.set($any($event.target).value)">
+                    @for (o of models.aiChoices(); track o.value) {
                       <option [value]="o.value">{{ o.label }}</option>
                     } @empty {
-                      <option value="">No models installed — see Downloads</option>
+                      <option value="">No AI models — download one or add an API key</option>
                     }
                   </select>
+                  <span class="form-label mt-1 text-tertiary">Used for generating notes. Spans local, Ollama, and cloud models.</span>
                 </div>
                 <div class="form-group">
-                  <label class="form-label">Default AI model (local)</label>
-                  <select class="form-control" [value]="localAiModel()" (change)="localAiModel.set($any($event.target).value)">
-                    @for (o of localAiOptions(); track o.value) {
+                  <label class="form-label">Transcription model (Whisper)</label>
+                  <select class="form-control" [value]="whisperModel()" (change)="whisperModel.set($any($event.target).value)">
+                    @for (o of models.whisperChoices(); track o.value) {
                       <option [value]="o.value">{{ o.label }}</option>
                     } @empty {
                       <option value="">No models installed — see Downloads</option>
@@ -85,81 +72,35 @@ const CLOUD_MODELS: Record<'claude' | 'openai', { value: string; label: string }
               <div class="settings-section-title">Processing device</div>
               <p class="sub">Used for both transcription and local AI analysis.</p>
               <div class="device-toggle">
-                <button
-                  class="btn"
-                  [class.btn-primary]="!useGpu()"
-                  [class.btn-secondary]="useGpu()"
-                  (click)="useGpu.set(false)"
-                >
-                  CPU
-                </button>
-                <button
-                  class="btn"
-                  [class.btn-primary]="useGpu()"
-                  [class.btn-secondary]="!useGpu()"
-                  (click)="useGpu.set(true)"
-                >
-                  GPU
-                </button>
+                <button class="btn" [class.btn-primary]="!useGpu()" [class.btn-secondary]="useGpu()" (click)="useGpu.set(false)">CPU</button>
+                <button class="btn" [class.btn-primary]="useGpu()" [class.btn-secondary]="!useGpu()" (click)="useGpu.set(true)">GPU</button>
               </div>
               <p class="form-label mt-1" [style.color]="gpuAvailable() ? 'var(--success)' : 'var(--text-tertiary)'">
                 {{ gpuHint() }}
               </p>
             </div>
 
-            <!-- AI provider -->
+            <!-- Connections: provider-specific config (the model itself is picked above) -->
             <div class="settings-section">
-              <div class="settings-section-title">AI provider</div>
+              <div class="settings-section-title">Connections</div>
               <div class="settings-grid">
                 <div class="form-group">
-                  <label class="form-label">Provider</label>
-                  <select class="form-control" [value]="provider()" (change)="onProviderChange($event)">
-                    <option value="local">Local (downloaded model)</option>
-                    <option value="ollama">Ollama</option>
-                    <option value="claude">Claude (Anthropic)</option>
-                    <option value="openai">OpenAI</option>
-                  </select>
+                  <label class="form-label">Ollama host</label>
+                  <div class="input-group">
+                    <input
+                      type="text"
+                      class="form-control"
+                      [value]="ollamaHost()"
+                      (input)="ollamaHost.set($any($event.target).value)"
+                    />
+                    <button class="btn btn-secondary btn-sm" (click)="checkOllama()">Check</button>
+                  </div>
                 </div>
-                @if (provider() === 'ollama') {
-                  <div class="form-group">
-                    <label class="form-label">Ollama host</label>
-                    <div class="input-group">
-                      <input
-                        type="text"
-                        class="form-control"
-                        [value]="ollamaHost()"
-                        (input)="ollamaHost.set($any($event.target).value)"
-                      />
-                      <button class="btn btn-secondary btn-sm" (click)="checkOllama()">Check</button>
-                    </div>
-                  </div>
-                }
-                @if (provider() !== 'local') {
-                  <div class="form-group">
-                    <label class="form-label">Cloud model</label>
-                    <select class="form-control" [value]="aiModel()" (change)="aiModel.set($any($event.target).value)">
-                      @for (m of aiModelOptions(); track m.value) {
-                        <option [value]="m.value">{{ m.label }}</option>
-                      } @empty {
-                        <option value="">No models available</option>
-                      }
-                    </select>
-                  </div>
-                }
-              </div>
-            </div>
-
-            <!-- API keys -->
-            <div class="settings-section">
-              <div class="settings-section-title">API keys</div>
-              <div class="settings-grid">
                 <div class="form-group">
                   <label class="form-label">Claude API key</label>
                   <div class="input-group">
                     <input #claudeKey type="password" class="form-control" placeholder="sk-ant-..." />
-                    <button class="btn btn-secondary btn-sm" (click)="saveApiKey('claude', claudeKey.value); claudeKey.value = ''">
-                      Save
-                    </button>
+                    <button class="btn btn-secondary btn-sm" (click)="saveApiKey('claude', claudeKey.value); claudeKey.value = ''">Save</button>
                   </div>
                   <span class="form-label mt-1" [style.color]="claudeConfigured() ? 'var(--success)' : 'var(--text-tertiary)'">
                     {{ claudeConfigured() ? 'Configured' : 'Not configured' }}
@@ -169,9 +110,7 @@ const CLOUD_MODELS: Record<'claude' | 'openai', { value: string; label: string }
                   <label class="form-label">OpenAI API key</label>
                   <div class="input-group">
                     <input #openaiKey type="password" class="form-control" placeholder="sk-..." />
-                    <button class="btn btn-secondary btn-sm" (click)="saveApiKey('openai', openaiKey.value); openaiKey.value = ''">
-                      Save
-                    </button>
+                    <button class="btn btn-secondary btn-sm" (click)="saveApiKey('openai', openaiKey.value); openaiKey.value = ''">Save</button>
                   </div>
                   <span class="form-label mt-1" [style.color]="openaiConfigured() ? 'var(--success)' : 'var(--text-tertiary)'">
                     {{ openaiConfigured() ? 'Configured' : 'Not configured' }}
@@ -209,20 +148,18 @@ const CLOUD_MODELS: Record<'claude' | 'openai', { value: string; label: string }
 })
 export class SettingsComponent {
   readonly setup = inject(SetupService);
+  readonly models = inject(ModelsService);
   private readonly components = inject(ComponentService);
   private readonly config = inject(ConfigService);
   private readonly electron = inject(ElectronService);
   private readonly toast = inject(ToastService);
 
-  readonly provider = signal<AiProvider>('local');
-  readonly ollamaHost = signal('http://127.0.0.1:11434');
-  readonly aiModel = signal('');
+  readonly aiChoice = signal('');
   readonly whisperModel = signal('');
-  readonly localAiModel = signal('');
+  readonly ollamaHost = signal('http://127.0.0.1:11434');
   readonly useGpu = signal(false);
   readonly notesPrompt = signal('');
 
-  private readonly ollamaModels = signal<{ id: string; name: string }[]>([]);
   readonly claudeConfigured = signal(false);
   readonly openaiConfigured = signal(false);
 
@@ -238,74 +175,35 @@ export class SettingsComponent {
 
   private onOpen(): void {
     const cfg = this.config.config();
-    this.provider.set(cfg.aiProvider);
-    this.ollamaHost.set(cfg.ollamaHost);
-    this.aiModel.set(cfg.aiModel);
+    this.aiChoice.set(this.models.currentAiValue(cfg));
     this.whisperModel.set(cfg.whisperModel);
-    this.localAiModel.set(cfg.localAiModel);
+    this.ollamaHost.set(cfg.ollamaHost);
     this.useGpu.set(cfg.useGpu);
     this.notesPrompt.set(cfg.notesPrompt || DEFAULT_NOTES_PROMPT);
-    if (cfg.aiProvider === 'ollama') void this.refreshOllamaModels();
+    void this.models.refreshOllama(cfg.ollamaHost);
     void this.loadApiKeys();
   }
 
-  // ─── Installed-model options ─────────────────────────────────────────────────
-  readonly whisperOptions = computed(() =>
-    this.components
-      .byCategory('whisper')
-      .filter((s) => s.state === 'installed')
-      .map((s) => ({ value: s.component.id.replace('whisper-', ''), label: s.component.name })),
-  );
-
-  readonly localAiOptions = computed(() =>
-    this.components
-      .byCategory('ai')
-      .filter((s) => s.state === 'installed')
-      .map((s) => ({ value: s.component.id, label: s.component.name })),
-  );
-
   // ─── GPU hint ────────────────────────────────────────────────────────────────
-  readonly gpuAvailable = computed(() => {
+  gpuAvailable(): boolean {
     const sys = this.components.system();
     return !!sys && (sys.cuda?.available || sys.appleSilicon);
-  });
+  }
 
-  readonly gpuHint = computed(() => {
+  gpuHint(): string {
     const sys = this.components.system();
     if (!sys) return 'GPU availability unknown.';
     if (sys.cuda?.available) return `NVIDIA ${sys.cuda.name || 'GPU'} detected.`;
     if (sys.appleSilicon) return 'Apple Silicon GPU (Metal) detected.';
     return 'No GPU detected — GPU mode falls back to CPU.';
-  });
-
-  // ─── Cloud provider ──────────────────────────────────────────────────────────
-  readonly aiModelOptions = computed(() => {
-    const p = this.provider();
-    if (p === 'ollama') return this.ollamaModels().map((m) => ({ value: m.id, label: m.name }));
-    if (p === 'claude' || p === 'openai') return CLOUD_MODELS[p];
-    return [];
-  });
-
-  onProviderChange(event: Event): void {
-    const value = (event.target as HTMLSelectElement).value as AiProvider;
-    this.provider.set(value);
-    if (value === 'ollama') void this.refreshOllamaModels();
   }
 
-  private async refreshOllamaModels(): Promise<void> {
-    try {
-      const result = await this.electron.checkOllama(this.ollamaHost());
-      this.ollamaModels.set(result.connected ? result.models : []);
-    } catch {
-      this.ollamaModels.set([]);
-    }
-  }
-
+  // ─── Connections ─────────────────────────────────────────────────────────────
   async checkOllama(): Promise<void> {
     try {
       const result = await this.electron.checkOllama(this.ollamaHost());
       if (result.connected) {
-        this.ollamaModels.set(result.models);
+        this.models.ollamaModels.set(result.models);
         this.toast.show('success', 'Connected', `Found ${result.models.length} model(s)`);
       } else {
         this.toast.show('error', 'Not Connected', 'Could not connect to Ollama');
@@ -315,7 +213,6 @@ export class SettingsComponent {
     }
   }
 
-  // ─── API keys ────────────────────────────────────────────────────────────────
   private async loadApiKeys(): Promise<void> {
     const keys = await this.electron.getApiKeys();
     this.claudeConfigured.set(!!keys.claudeApiKey);
@@ -345,16 +242,14 @@ export class SettingsComponent {
 
   // ─── Save / nav ──────────────────────────────────────────────────────────────
   async save(): Promise<void> {
-    // Persist the prompt only when it differs from the built-in default, so a
-    // future change to the default still reaches users who never edited it.
     const prompt = this.notesPrompt().trim();
     const patch: Partial<AppConfig> = {
-      aiProvider: this.provider(),
-      ollamaHost: this.ollamaHost(),
-      aiModel: this.aiModel(),
+      ...this.models.patchForAi(this.aiChoice()),
       whisperModel: this.whisperModel(),
-      localAiModel: this.localAiModel(),
+      ollamaHost: this.ollamaHost(),
       useGpu: this.useGpu(),
+      // Persist the prompt only when it differs from the built-in default, so a
+      // future change to the default still reaches users who never edited it.
       notesPrompt: prompt === DEFAULT_NOTES_PROMPT.trim() ? '' : prompt,
     };
     await this.config.save(patch);
