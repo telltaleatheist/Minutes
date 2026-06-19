@@ -6,6 +6,7 @@
  */
 
 import { llamaCudaComponent } from './llama-cuda';
+import { whisperCudaComponent } from './whisper-cuda';
 import type { OptionalComponent } from './component-types';
 
 const MB = 1024 * 1024;
@@ -312,6 +313,7 @@ export function getCatalog(): OptionalComponent[] {
     whisperEngine,
     llama,
     ...aiComponents(),
+    whisperCudaComponent(),
     llamaCudaComponent(),
   ];
 }

@@ -103,7 +103,12 @@ function resolveSystemBinary(...names: string[]): string {
   return names[0]; // let the OS resolve it against PATH
 }
 
-function getWhisperPath() {
+function getWhisperPath(useGpu = false) {
+  // GPU mode (Windows + NVIDIA): prefer the downloaded CUDA whisper build.
+  if (useGpu) {
+    const cuda = componentManager.resolveEntry('whisper-cuda');
+    if (cuda) return cuda;
+  }
   // The whisper engine is downloaded on first run (Windows + macOS) into
   // userData/components/. Prefer that; fall back to a system whisper.cpp CLI on
   // Linux or if the download is somehow missing (Homebrew installs both names).
@@ -495,7 +500,7 @@ function convertToWav(inputPath: string, outputPath: string): Promise<string> {
 }
 
 ipcMain.handle('transcribe-audio', async (event, audioPath, modelName = 'base', useGpu = false) => {
-  const whisperPathPre = getWhisperPath();
+  const whisperPathPre = getWhisperPath(useGpu);
   const downloadedModelPre = componentManager.resolveEntry(`whisper-${modelName}`);
   const modelPathPre = downloadedModelPre || path.join(getWhisperModelsPath(), `ggml-${modelName}.bin`);
   if (!fs.existsSync(whisperPathPre)) {
@@ -524,7 +529,7 @@ ipcMain.handle('transcribe-audio', async (event, audioPath, modelName = 'base', 
   return new Promise((resolve, reject) => {
     const cleanupConv = () => { try { fs.rmSync(convDir, { recursive: true, force: true }); } catch { /* ignore */ } };
     audioPath = preparedInput;
-    const whisperPath = getWhisperPath();
+    const whisperPath = getWhisperPath(useGpu);
     // Prefer a model installed via the setup screen (userData/components),
     // falling back to a model bundled in utilities/models.
     const downloadedModel = componentManager.resolveEntry(`whisper-${modelName}`);

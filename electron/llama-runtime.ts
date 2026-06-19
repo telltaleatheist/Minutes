@@ -115,8 +115,13 @@ async function startServer(modelId: string, preferCpu = false): Promise<RunningS
     '--port', String(port),
     '--ctx-size', '0', // use the model's trained context length
   ];
-  if (engine.cuda) {
-    args.push('--n-gpu-layers', '99'); // offload all layers to the GPU
+  // Offload all layers to the GPU on a CUDA build (Windows/NVIDIA) or any macOS
+  // build (llama.cpp ships Metal by default there). On macOS the same binary
+  // serves both modes, so we must also honor preferCpu here — unlike Windows,
+  // where preferCpu already selected the non-CUDA engine.
+  const gpuOffload = !preferCpu && (engine.cuda || process.platform === 'darwin');
+  if (gpuOffload) {
+    args.push('--n-gpu-layers', '99');
   }
 
   console.log(`[LLAMA] Starting ${engine.cuda ? 'CUDA' : 'CPU'} server: ${modelId} on port ${port}`);

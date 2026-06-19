@@ -13,6 +13,7 @@ import { downloadFileWithRetry, verifySha256, extractArchive, findFile } from '.
 import { profile, evaluate } from './system-probe';
 import { getCatalog, getComponent } from './catalog';
 import { downloadLlamaCudaInto, LLAMA_CUDA_ID } from './llama-cuda';
+import { downloadWhisperCudaInto, WHISPER_CUDA_ID } from './whisper-cuda';
 import type {
   ComponentArtifact,
   ComponentState,
@@ -158,6 +159,11 @@ export async function install(
     if (id === LLAMA_CUDA_ID) {
       // Special multi-archive installer (CUDA build + cudart + VC++ runtime).
       await downloadLlamaCudaInto(installDir, emit, ac.signal);
+      entryAbs = path.join(installDir, component.entryPath);
+      bytes = component.sizeBytes;
+    } else if (id === WHISPER_CUDA_ID) {
+      // Self-contained cuBLAS archive + VC++ runtime copied in.
+      await downloadWhisperCudaInto(installDir, emit, ac.signal);
       entryAbs = path.join(installDir, component.entryPath);
       bytes = component.sizeBytes;
     } else {
