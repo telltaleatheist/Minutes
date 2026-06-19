@@ -186,9 +186,10 @@ const llama: OptionalComponent = {
   description:
     'Runs downloaded AI models on-device via llama-server (OpenAI-compatible). Required to use any local AI model. CPU build — pairs with the optional CUDA accelerator.',
   category: 'tool',
-  // Required on Windows (no system fallback there); optional on macOS, where
-  // Ollama and the Claude / OpenAI APIs are also available.
-  required: IS_WIN,
+  // Part of the core toolchain: downloaded alongside ffmpeg and whisper on first
+  // run wherever there's a build (Windows + macOS). The engine is small; the
+  // (large) AI models stay opt-in.
+  required: PLATFORM === 'win32' || PLATFORM === 'darwin',
   sizeBytes: 45_000_000,
   requirements: { platforms: ['win32', 'darwin'], gpu: 'none', minDiskMB: diskFor(45_000_000) },
   artifacts: [
