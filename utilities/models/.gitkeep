@@ -1,0 +1,1 @@
+# Keeps utilities/models present; whisper model .bin files are downloaded at runtime into userData/components (or dropped here as a fallback).

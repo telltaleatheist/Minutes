@@ -11,6 +11,17 @@ import type { OptionalComponent } from './component-types';
 const MB = 1024 * 1024;
 const diskFor = (bytes: number) => Math.ceil((bytes * 1.3) / MB); // download + extracted/runtime headroom
 
+const IS_WIN = process.platform === 'win32';
+const PLATFORM = process.platform as 'win32' | 'darwin' | 'linux';
+
+// Prebuilt native tool binaries (ffmpeg + ffprobe, the whisper.cpp engine, and the
+// llama.cpp server) are published as per-platform archives on this repo's own
+// release and downloaded into userData/components/ on first run (or whenever
+// they're missing). sha256 is pinned to the published artifacts; the per-artifact
+// `entry` names the executable inside each archive (its name varies by platform/arch).
+const BINARIES_BASE =
+  'https://github.com/telltaleatheist/Minutes/releases/download/binaries-v1';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Whisper transcription models — raw ggml .bin files from the whisper.cpp repo
 // ─────────────────────────────────────────────────────────────────────────────
@@ -43,17 +54,21 @@ function whisperComponents(): OptionalComponent[] {
     sizeBytes: w.bytes,
     recommended: w.recommended,
     requirements: { gpu: 'none', minDiskMB: diskFor(w.bytes) },
-    artifacts: [
-      {
-        platform: 'win32',
-        arch: 'x64',
-        kind: 'file',
-        url: `${WHISPER_BASE_URL}/ggml-${w.model}.bin`,
-        sha256: '',
-        bytes: w.bytes,
-        fileName: `ggml-${w.model}.bin`,
-      },
-    ],
+    // The ggml .bin model files are platform-neutral; offer them on every OS/arch.
+    artifacts: ([
+      { platform: 'win32', arch: 'x64' },
+      { platform: 'darwin', arch: 'arm64' },
+      { platform: 'darwin', arch: 'x64' },
+      { platform: 'linux', arch: 'x64' },
+    ] as const).map((p) => ({
+      platform: p.platform,
+      arch: p.arch,
+      kind: 'file' as const,
+      url: `${WHISPER_BASE_URL}/ggml-${w.model}.bin`,
+      sha256: '',
+      bytes: w.bytes,
+      fileName: `ggml-${w.model}.bin`,
+    })),
     entryPath: `ggml-${w.model}.bin`,
     version: 'whisper.cpp',
   }));
@@ -65,26 +80,96 @@ function whisperComponents(): OptionalComponent[] {
 
 const ffmpeg: OptionalComponent = {
   id: 'ffmpeg',
-  name: 'FFmpeg',
+  name: 'FFmpeg & FFprobe',
   description:
     'Extracts audio from video and converts any input to the 16 kHz mono WAV whisper needs. Required for video and most compressed audio.',
   category: 'tool',
-  required: true,
-  sizeBytes: 90_000_000,
-  requirements: { platforms: ['win32'], gpu: 'none', minDiskMB: diskFor(90_000_000) },
+  // Downloadable on Windows and macOS; on Linux we fall back to a system ffmpeg,
+  // so it isn't required there and doesn't gate setup.
+  required: PLATFORM === 'win32' || PLATFORM === 'darwin',
+  sizeBytes: 47_474_181,
+  requirements: { platforms: ['win32', 'darwin'], gpu: 'none', minDiskMB: diskFor(47_474_181) },
   artifacts: [
+    {
+      platform: 'darwin',
+      arch: 'arm64',
+      kind: 'archive',
+      url: `${BINARIES_BASE}/ffmpeg-tools-darwin-arm64.tar.gz`,
+      sha256: '802d14109e0ac0dc37c06cb9c95db8e0e69c848f9e911b2f6b093c752c09aa84',
+      bytes: 24_148_420,
+      entry: 'ffmpeg',
+    },
+    {
+      platform: 'darwin',
+      arch: 'x64',
+      kind: 'archive',
+      url: `${BINARIES_BASE}/ffmpeg-tools-darwin-x64.tar.gz`,
+      sha256: 'aa3f9be5d07e00e95e526af48cc8a41f8deff3bf9ba15b76d23387847a2e61f5',
+      bytes: 47_474_181,
+      entry: 'ffmpeg',
+    },
     {
       platform: 'win32',
       arch: 'x64',
       kind: 'archive',
-      // BtbN publishes a rolling "latest" GPL build; ffmpeg.exe sits in bin/.
-      url: 'https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-win64-gpl.zip',
-      sha256: '',
-      bytes: 90_000_000,
+      url: `${BINARIES_BASE}/ffmpeg-tools-win32-x64.zip`,
+      sha256: '041a4a887ac47ba9e2713e3b3b48df7041471ade0d31e79daad1be8f7b0dd989',
+      bytes: 51_174_807,
+      entry: 'ffmpeg.exe',
     },
   ],
-  entryPath: 'ffmpeg.exe', // nested under .../bin/ — manager records the real path
-  version: 'latest',
+  // Fallback only; each artifact's `entry` names the real binary inside its archive.
+  entryPath: IS_WIN ? 'ffmpeg.exe' : 'ffmpeg',
+  version: 'binaries-v1',
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// whisper.cpp engine — the CLI that turns audio into text on-device. Downloaded
+// on first run on both Windows and macOS (the Windows archive bundles the ggml
+// DLLs and the VC++ runtime alongside whisper-cli.exe); on Linux we fall back to
+// a system whisper.cpp.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const whisperEngine: OptionalComponent = {
+  id: 'whisper',
+  name: 'Whisper (speech-to-text engine)',
+  description:
+    'The whisper.cpp engine that transcribes audio to text on-device. Required to transcribe.',
+  category: 'tool',
+  required: PLATFORM === 'win32' || PLATFORM === 'darwin',
+  sizeBytes: 1_982_464,
+  requirements: { platforms: ['win32', 'darwin'], gpu: 'none', minDiskMB: diskFor(1_982_464) },
+  artifacts: [
+    {
+      platform: 'darwin',
+      arch: 'arm64',
+      kind: 'archive',
+      url: `${BINARIES_BASE}/whisper-darwin-arm64.tar.gz`,
+      sha256: '8562cb5f1e0329a8ec69b173576e265d52551fd46b880000c784544a62afaf7d',
+      bytes: 864_993,
+      entry: 'whisper-cli-arm64',
+    },
+    {
+      platform: 'darwin',
+      arch: 'x64',
+      kind: 'archive',
+      url: `${BINARIES_BASE}/whisper-darwin-x64.tar.gz`,
+      sha256: 'acad8080ffa3a3d0f8b2ce47eaa0f91f8dbeec9e271872867e96250901d1b908',
+      bytes: 1_160_425,
+      entry: 'whisper-cli-x64',
+    },
+    {
+      platform: 'win32',
+      arch: 'x64',
+      kind: 'archive',
+      url: `${BINARIES_BASE}/whisper-win32-x64.zip`,
+      sha256: '703dbf6419dd4273b2e60ac72cf4980d2be72b4d4338401e5241451a20af420e',
+      bytes: 1_982_464,
+      entry: 'whisper-cli.exe',
+    },
+  ],
+  entryPath: IS_WIN ? 'whisper-cli.exe' : 'whisper-cli',
+  version: 'binaries-v1',
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -100,20 +185,43 @@ const llama: OptionalComponent = {
   description:
     'Runs downloaded AI models on-device via llama-server (OpenAI-compatible). Required to use any local AI model. CPU build — pairs with the optional CUDA accelerator.',
   category: 'tool',
-  required: true,
+  // Required on Windows (no system fallback there); optional on macOS, where
+  // Ollama and the Claude / OpenAI APIs are also available.
+  required: IS_WIN,
   sizeBytes: 45_000_000,
-  requirements: { platforms: ['win32'], gpu: 'none', minDiskMB: diskFor(45_000_000) },
+  requirements: { platforms: ['win32', 'darwin'], gpu: 'none', minDiskMB: diskFor(45_000_000) },
   artifacts: [
+    {
+      platform: 'darwin',
+      arch: 'arm64',
+      kind: 'archive',
+      url: `${BINARIES_BASE}/llama-darwin-arm64.tar.gz`,
+      sha256: '973966715f3e1a89432b768ce5c1c6f542352aead14921c2b43807a490be8381',
+      bytes: 4_857_599,
+      entry: 'llama-server-arm64',
+    },
+    {
+      platform: 'darwin',
+      arch: 'x64',
+      kind: 'archive',
+      url: `${BINARIES_BASE}/llama-darwin-x64.tar.gz`,
+      sha256: '84ae70b693253a3e244e10adc68728d4649a4873274106c8754b5f7c486b0b40',
+      bytes: 5_012_902,
+      entry: 'llama-server-x64',
+    },
     {
       platform: 'win32',
       arch: 'x64',
       kind: 'archive',
+      // Windows keeps the ggml-org CPU build pinned to LLAMA_CPP_VERSION so it
+      // stays in lockstep with the CUDA accelerator (llama-cuda.ts).
       url: `https://github.com/ggml-org/llama.cpp/releases/download/${LLAMA_CPP_VERSION}/llama-${LLAMA_CPP_VERSION}-bin-win-cpu-x64.zip`,
       sha256: '',
       bytes: 45_000_000,
+      entry: 'llama-server.exe',
     },
   ],
-  entryPath: 'llama-server.exe',
+  entryPath: IS_WIN ? 'llama-server.exe' : 'llama-server',
   version: LLAMA_CPP_VERSION,
 };
 
@@ -201,6 +309,7 @@ export function getCatalog(): OptionalComponent[] {
   return [
     ...whisperComponents(),
     ffmpeg,
+    whisperEngine,
     llama,
     ...aiComponents(),
     llamaCudaComponent(),

@@ -84,15 +84,11 @@ function resolveSystemBinary(...names: string[]): string {
 }
 
 function getWhisperPath() {
-  // Prefer the component-managed download (macOS gets it on first run).
+  // The whisper engine is downloaded on first run (Windows + macOS) into
+  // userData/components/. Prefer that; fall back to a system whisper.cpp CLI on
+  // Linux or if the download is somehow missing (Homebrew installs both names).
   const managed = componentManager.resolveEntry('whisper');
   if (managed) return managed;
-  if (process.platform === 'win32') {
-    // Windows ships a bundled whisper-cli.exe under utilities/bin.
-    const utilitiesPath = getUtilitiesPath();
-    return path.join(utilitiesPath, 'bin', 'whisper-cli.exe');
-  }
-  // Last resort on macOS/Linux: a system whisper.cpp CLI (Homebrew installs both names).
   return resolveSystemBinary('whisper-cli', 'whisper-cpp');
 }
 
@@ -482,7 +478,7 @@ ipcMain.handle('transcribe-audio', async (event, audioPath, modelName = 'base') 
   const whisperPathPre = getWhisperPath();
   const downloadedModelPre = componentManager.resolveEntry(`whisper-${modelName}`);
   const modelPathPre = downloadedModelPre || path.join(getWhisperModelsPath(), `ggml-${modelName}.bin`);
-  if (process.platform !== 'win32' && !fs.existsSync(whisperPathPre)) {
+  if (!fs.existsSync(whisperPathPre)) {
     throw new Error(
       `Whisper engine not found. Download it from the setup screen (or install whisper.cpp with "brew install whisper-cpp").`
     );
