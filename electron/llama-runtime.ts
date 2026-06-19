@@ -15,8 +15,52 @@ import { spawn, ChildProcess } from 'child_process';
 
 import { resolveEntry } from './components/component-manager';
 import { LLAMA_CUDA_ID } from './components/llama-cuda';
+import { getComponent } from './components/catalog';
+import { profile } from './components/system-probe';
 
 const LLAMA_CPU_ID = 'llama';
+
+// Transformer layer counts for the local models, used to size partial GPU
+// offload. Keyed by catalog id; falls back to all-or-nothing when unknown.
+const MODEL_LAYERS: Record<string, number> = {
+  'cogito-3b': 28,  // Llama 3.2 3B
+  'cogito-8b': 32,  // Llama 3.1 8B
+  'cogito-14b': 48, // Qwen 2.5 14B
+};
+
+/**
+ * Decide how many layers to offload to the GPU. Full offload of a model that
+ * doesn't fit in VRAM makes llama-server crash on startup (0xC0000005), so size
+ * it to the available VRAM: full if it fits, partial if it nearly does, else CPU.
+ */
+async function computeNgl(modelId: string, preferCpu: boolean): Promise<{ ngl: number; note: string }> {
+  if (preferCpu) return { ngl: 0, note: 'CPU mode' };
+  if (process.platform === 'darwin') return { ngl: 99, note: 'Metal (unified memory): full offload' };
+
+  const prof = await profile();
+  const vramMB = prof.cuda?.vramMB;
+  if (!prof.cuda?.available || !vramMB || vramMB < 4096) {
+    return { ngl: 0, note: 'no usable CUDA VRAM → CPU' };
+  }
+
+  const sizeGB = (getComponent(modelId)?.sizeBytes ?? 0) / 1e9;
+  const vramGB = vramMB / 1024;
+  const HEADROOM_GB = 1.8; // display + KV cache (8K ctx) + compute buffers
+  const budget = vramGB - HEADROOM_GB;
+
+  if (sizeGB <= 0) return { ngl: 99, note: 'unknown model size → full offload' };
+  if (sizeGB <= budget) {
+    return { ngl: 99, note: `full offload (${sizeGB.toFixed(1)}GB ≤ ${budget.toFixed(1)}GB VRAM budget)` };
+  }
+  const layers = MODEL_LAYERS[modelId] ?? 0;
+  if (layers > 0 && budget > 0) {
+    const n = Math.max(0, Math.min(layers, Math.floor(layers * (budget / sizeGB))));
+    if (n <= 0) return { ngl: 0, note: `${sizeGB.toFixed(1)}GB model too big for ${vramGB.toFixed(0)}GB VRAM → CPU` };
+    if (n >= layers) return { ngl: 99, note: 'full offload' };
+    return { ngl: n, note: `partial offload ${n}/${layers} layers (${sizeGB.toFixed(1)}GB model, ${vramGB.toFixed(0)}GB VRAM)` };
+  }
+  return { ngl: 0, note: `${sizeGB.toFixed(1)}GB model exceeds ${vramGB.toFixed(0)}GB VRAM → CPU` };
+}
 
 // How long to wait for the server's /health to report ready. Large models on CPU
 // can take a while to memory-map and warm up.
@@ -95,7 +139,13 @@ async function pollHealth(proc: ChildProcess, port: number, timeoutMs: number): 
   );
 }
 
-async function startServer(modelId: string, preferCpu = false): Promise<RunningServer> {
+async function startServer(
+  modelId: string,
+  preferCpu = false,
+  // The device the caller asked for — used as the reuse key so a GPU request
+  // that fell back to CPU is still reused on the next GPU-mode call.
+  requestedCpu = preferCpu,
+): Promise<RunningServer> {
   const engine = resolveServerExe(preferCpu);
   if (!engine) {
     throw new Error(
@@ -115,13 +165,14 @@ async function startServer(modelId: string, preferCpu = false): Promise<RunningS
     '--port', String(port),
     '--ctx-size', '0', // use the model's trained context length
   ];
-  // Offload all layers to the GPU on a CUDA build (Windows/NVIDIA) or any macOS
-  // build (llama.cpp ships Metal by default there). On macOS the same binary
-  // serves both modes, so we must also honor preferCpu here — unlike Windows,
-  // where preferCpu already selected the non-CUDA engine.
-  const gpuOffload = !preferCpu && (engine.cuda || process.platform === 'darwin');
-  if (gpuOffload) {
-    args.push('--n-gpu-layers', '99');
+  // GPU offload only when the engine can actually do it (a CUDA build on
+  // Windows, or any macOS build via Metal). The layer count is sized to VRAM to
+  // avoid the full-offload startup crash on cards that can't hold the model.
+  const canGpu = engine.cuda || process.platform === 'darwin';
+  const { ngl, note } = canGpu ? await computeNgl(modelId, preferCpu) : { ngl: 0, note: 'CPU engine' };
+  console.log(`[LLAMA] GPU offload for ${modelId}: -ngl ${ngl} (${note})`);
+  if (ngl > 0) {
+    args.push('--n-gpu-layers', String(ngl));
   }
 
   console.log(`[LLAMA] Starting ${engine.cuda ? 'CUDA' : 'CPU'} server: ${modelId} on port ${port}`);
@@ -145,7 +196,7 @@ async function startServer(modelId: string, preferCpu = false): Promise<RunningS
     modelId,
     port,
     baseUrl: `http://127.0.0.1:${port}`,
-    preferCpu,
+    preferCpu: requestedCpu,
   };
 
   // If the process dies, drop our reference so the next call respawns it.
@@ -191,7 +242,14 @@ async function ensureServer(modelId: string, preferCpu = false): Promise<Running
 
   // Different model/device (or nothing running): stop the old one, start fresh.
   stop();
-  starting = startServer(modelId, preferCpu);
+  // If a GPU start crashes (e.g. VRAM overflow → 0xC0000005), fall back to CPU
+  // once so generation still succeeds instead of surfacing the crash.
+  starting = startServer(modelId, preferCpu).catch((err) => {
+    if (preferCpu) throw err;
+    console.warn(`[LLAMA] GPU start failed (${err instanceof Error ? err.message : err}); retrying on CPU`);
+    // Force CPU engine, but keep the original (GPU) request as the reuse key.
+    return startServer(modelId, true, preferCpu);
+  });
   try {
     return await starting;
   } finally {
