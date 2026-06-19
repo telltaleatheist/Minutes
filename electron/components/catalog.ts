@@ -286,17 +286,23 @@ function aiComponents(): OptionalComponent[] {
     sizeBytes: a.bytes,
     recommended: a.recommended,
     requirements: { gpu: 'none', minRamMB: a.minRamMB, minDiskMB: diskFor(a.bytes) },
-    artifacts: [
-      {
-        platform: 'win32',
-        arch: 'x64',
-        kind: 'file',
-        url: `${HF_BASE}/${a.repo}/resolve/main/${a.file}`,
-        sha256: '',
-        bytes: a.bytes,
-        fileName: `${a.id}.gguf`,
-      },
-    ],
+    // GGUF model files are platform-neutral (served from HuggingFace); offer them
+    // on every OS/arch, same as the whisper .bin models. llama-server runs them on
+    // CPU everywhere and on Metal (macOS) / CUDA (Windows) when GPU mode is on.
+    artifacts: ([
+      { platform: 'win32', arch: 'x64' },
+      { platform: 'darwin', arch: 'arm64' },
+      { platform: 'darwin', arch: 'x64' },
+      { platform: 'linux', arch: 'x64' },
+    ] as const).map((p) => ({
+      platform: p.platform,
+      arch: p.arch,
+      kind: 'file' as const,
+      url: `${HF_BASE}/${a.repo}/resolve/main/${a.file}`,
+      sha256: '',
+      bytes: a.bytes,
+      fileName: `${a.id}.gguf`,
+    })),
     entryPath: `${a.id}.gguf`,
     version: 'cogito-v1-preview',
   }));

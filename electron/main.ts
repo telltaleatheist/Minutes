@@ -137,32 +137,45 @@ function getConfigPath() {
   return path.join(app.getPath('userData'), 'config.json');
 }
 
-// Helper function to find RODECaster drive
-function findRodecasterDrive() {
-  const possibleDrives = ['G:', 'D:', 'F:', 'E:'];
+// Does a directory look like a RODECaster card root? It either holds date-named
+// session folders (e.g. "168 - 16 Jan 2026") or a "RODECaster" subfolder. Returns
+// the recordings path to use (the subfolder if present, else the dir), or null.
+function rodecasterRootIn(dir: string): string | null {
+  try {
+    if (!fs.existsSync(dir)) return null;
+    const items = fs.readdirSync(dir);
+    const looksLikeCard = items.some(
+      (item) => /^\d+ - \d+ \w+ \d{4}$/.test(item) || item === 'RODECaster'
+    );
+    if (!looksLikeCard) return null;
+    const subfolder = path.join(dir, 'RODECaster');
+    return fs.existsSync(subfolder) ? subfolder : dir;
+  } catch {
+    return null; // not accessible
+  }
+}
 
-  for (const drive of possibleDrives) {
-    // Check if drive exists and has RODECaster-style folders (e.g., "168 - 16 Jan 2026")
-    const drivePath = drive + '\\';
-    try {
-      if (fs.existsSync(drivePath)) {
-        const items = fs.readdirSync(drivePath);
-        // Look for RODECaster folder pattern or RODECaster subfolder
-        const hasRodecasterFolders = items.some(item => {
-          return /^\d+ - \d+ \w+ \d{4}$/.test(item) || item === 'RODECaster';
-        });
-        if (hasRodecasterFolders) {
-          // Check if it's in a RODECaster subfolder or at root
-          const subfolderPath = path.join(drivePath, 'RODECaster');
-          if (fs.existsSync(subfolderPath)) {
-            return subfolderPath;
-          }
-          return drivePath;
-        }
+// Locate a mounted RODECaster card across platforms. Windows: common removable
+// drive letters. macOS: /Volumes/*. Linux: /media, /run/media, /mnt (one level).
+function findRodecasterDrive(): string | null {
+  const roots: string[] = [];
+  if (process.platform === 'win32') {
+    for (const drive of ['G:', 'D:', 'F:', 'E:']) roots.push(drive + '\\');
+  } else {
+    const parents = process.platform === 'darwin'
+      ? ['/Volumes']
+      : ['/media', '/run/media', '/mnt'];
+    for (const parent of parents) {
+      try {
+        for (const name of fs.readdirSync(parent)) roots.push(path.join(parent, name));
+      } catch {
+        // mount parent doesn't exist on this machine
       }
-    } catch (e) {
-      // Drive not accessible
     }
+  }
+  for (const root of roots) {
+    const hit = rodecasterRootIn(root);
+    if (hit) return hit;
   }
   return null;
 }
@@ -212,10 +225,10 @@ ipcMain.handle('select-audio-file', async (event, defaultPath) => {
   if (defaultPath && fs.existsSync(defaultPath)) {
     dialogOptions.defaultPath = defaultPath;
   } else {
-    // Default to G: drive where RODECaster files are
-    const gDrive = 'G:\\';
-    if (fs.existsSync(gDrive)) {
-      dialogOptions.defaultPath = gDrive;
+    // Otherwise start in a mounted RODECaster card if one is present.
+    const rodecaster = findRodecasterDrive();
+    if (rodecaster) {
+      dialogOptions.defaultPath = rodecaster;
     }
   }
 
