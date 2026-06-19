@@ -70,6 +70,9 @@ export class ElectronService {
   openFolder(path: string): Promise<SaveResult> {
     return this.api.openFolder(path);
   }
+  openLogsFolder(): Promise<SaveResult> {
+    return this.api.openLogsFolder();
+  }
 
   // ─── Components / setup ──────────────────────────────────────────────────────
   detectSystem(): Promise<SystemProfile> {

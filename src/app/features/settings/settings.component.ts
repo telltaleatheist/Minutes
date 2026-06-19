@@ -133,6 +133,13 @@ import { AppConfig, DEFAULT_NOTES_PROMPT } from '../../core/models/types';
                 (input)="notesPrompt.set($any($event.target).value)"
               ></textarea>
             </div>
+
+            <!-- Diagnostics -->
+            <div class="settings-section">
+              <div class="settings-section-title">Diagnostics</div>
+              <p class="sub">Rolling logs of what the app and the AI/transcription engines do — useful for troubleshooting. Old logs are trimmed automatically.</p>
+              <button class="btn btn-secondary btn-sm" (click)="openLogs()">Open logs folder</button>
+            </div>
           </div>
 
           <div class="setup-card-foot">
@@ -255,6 +262,11 @@ export class SettingsComponent {
     await this.config.save(patch);
     this.toast.show('success', 'Saved', 'Settings saved');
     this.setup.closeSettings();
+  }
+
+  async openLogs(): Promise<void> {
+    const r = await this.electron.openLogsFolder();
+    if (!r.success) this.toast.show('error', 'Error', r.error || 'Could not open logs folder');
   }
 
   openDownloads(): void {

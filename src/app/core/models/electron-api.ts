@@ -45,6 +45,7 @@ export interface ElectronAPI {
 
   // Misc
   openFolder(path: string): Promise<SaveResult>;
+  openLogsFolder(): Promise<SaveResult>;
   saveNotes(notes: string, outputPath: string): Promise<SaveResult>;
 
   // Components (setup / downloads)

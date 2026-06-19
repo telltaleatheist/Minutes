@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Misc
   openFolder: (path) => ipcRenderer.invoke('open-folder', path),
+  openLogsFolder: () => ipcRenderer.invoke('open-logs-folder'),
   saveNotes: (notes, outputPath) => ipcRenderer.invoke('save-notes', notes, outputPath),
 
   // Components (setup / downloads)

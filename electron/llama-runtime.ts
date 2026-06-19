@@ -20,6 +20,25 @@ import { profile } from './components/system-probe';
 
 const LLAMA_CPU_ID = 'llama';
 
+// Context window bounds. We never use the model's full 131K trained context
+// (its KV cache alone is ~16 GB); instead we size the window to the actual
+// prompt so a short transcript allocates a small KV cache. MAX caps very long
+// meetings; MIN keeps a floor for tiny inputs.
+const MIN_CTX_SIZE = 2048;
+const MAX_CTX_SIZE = 32768;
+const CTX_OUTPUT_RESERVE = 4096; // room for the generated notes + a little slack
+
+/** Estimate the context window (tokens) needed for one generation: the prompt
+ *  plus room for the response, clamped and rounded up. ~3.5 chars/token is a
+ *  deliberately conservative (over-)estimate so the transcript isn't truncated;
+ *  no tokenizer is available in the main process. */
+function estimateCtxSize(systemPrompt: string, userPrompt: string, maxTokens = 4000): number {
+  const promptTokens = Math.ceil((systemPrompt.length + userPrompt.length) / 3.5);
+  const needed = promptTokens + Math.max(maxTokens, CTX_OUTPUT_RESERVE) + 512;
+  const clamped = Math.min(MAX_CTX_SIZE, Math.max(MIN_CTX_SIZE, needed));
+  return Math.ceil(clamped / 1024) * 1024; // round up to a tidy multiple
+}
+
 // Transformer layer counts for the local models, used to size partial GPU
 // offload. Keyed by catalog id; falls back to all-or-nothing when unknown.
 const MODEL_LAYERS: Record<string, number> = {
@@ -73,6 +92,7 @@ interface RunningServer {
   port: number;
   baseUrl: string;
   preferCpu: boolean;
+  ctxSize: number;
 }
 
 let current: RunningServer | null = null;
@@ -145,6 +165,7 @@ async function startServer(
   // The device the caller asked for — used as the reuse key so a GPU request
   // that fell back to CPU is still reused on the next GPU-mode call.
   requestedCpu = preferCpu,
+  ctxSize = MAX_CTX_SIZE,
 ): Promise<RunningServer> {
   const engine = resolveServerExe(preferCpu);
   if (!engine) {
@@ -163,7 +184,11 @@ async function startServer(
     '--model', modelPath,
     '--host', '127.0.0.1',
     '--port', String(port),
-    '--ctx-size', '0', // use the model's trained context length
+    // Context window, sized to the prompt (see estimateCtxSize). '0' would use
+    // the model's full trained context (131072 for Llama 3.x) → a ~16 GB KV
+    // cache that can push a full-offload past VRAM and crash on startup
+    // (0xC0000005). Sizing to need keeps the KV cache as small as the job allows.
+    '--ctx-size', String(ctxSize),
   ];
   // GPU offload only when the engine can actually do it (a CUDA build on
   // Windows, or any macOS build via Metal). The layer count is sized to VRAM to
@@ -175,7 +200,7 @@ async function startServer(
     args.push('--n-gpu-layers', String(ngl));
   }
 
-  console.log(`[LLAMA] Starting ${engine.cuda ? 'CUDA' : 'CPU'} server: ${modelId} on port ${port}`);
+  console.log(`[LLAMA] Starting ${engine.cuda ? 'CUDA' : 'CPU'} server: ${modelId} on port ${port} (ctx ${ctxSize})`);
 
   const engineDir = path.dirname(engine.exe);
   // sibling ggml/cublas/cudart DLLs (Windows) or .dylib files (macOS) must resolve.
@@ -197,6 +222,7 @@ async function startServer(
     port,
     baseUrl: `http://127.0.0.1:${port}`,
     preferCpu: requestedCpu,
+    ctxSize,
   };
 
   // If the process dies, drop our reference so the next call respawns it.
@@ -226,29 +252,27 @@ async function startServer(
 
 /** Ensure a server is running for `modelId`, reusing the current one if it
  *  matches and is alive. Returns the running server. */
-async function ensureServer(modelId: string, preferCpu = false): Promise<RunningServer> {
-  if (
-    current &&
-    current.modelId === modelId &&
-    current.preferCpu === preferCpu &&
-    current.proc.exitCode === null
-  ) {
-    return current;
-  }
+async function ensureServer(modelId: string, preferCpu = false, needCtx = MAX_CTX_SIZE): Promise<RunningServer> {
+  // Reuse only if the running server matches model+device AND already has a big
+  // enough context (it's fine to reuse a larger one for a smaller prompt).
+  const reusable = (s: RunningServer) =>
+    s.modelId === modelId && s.preferCpu === preferCpu && s.ctxSize >= needCtx && s.proc.exitCode === null;
+
+  if (current && reusable(current)) return current;
   if (starting) {
     const s = await starting;
-    if (s.modelId === modelId && s.preferCpu === preferCpu && s.proc.exitCode === null) return s;
+    if (reusable(s)) return s;
   }
 
-  // Different model/device (or nothing running): stop the old one, start fresh.
+  // Different model/device/too-small context (or nothing running): start fresh.
   stop();
   // If a GPU start crashes (e.g. VRAM overflow → 0xC0000005), fall back to CPU
   // once so generation still succeeds instead of surfacing the crash.
-  starting = startServer(modelId, preferCpu).catch((err) => {
+  starting = startServer(modelId, preferCpu, preferCpu, needCtx).catch((err) => {
     if (preferCpu) throw err;
     console.warn(`[LLAMA] GPU start failed (${err instanceof Error ? err.message : err}); retrying on CPU`);
     // Force CPU engine, but keep the original (GPU) request as the reuse key.
-    return startServer(modelId, true, preferCpu);
+    return startServer(modelId, true, preferCpu, needCtx);
   });
   try {
     return await starting;
@@ -290,7 +314,8 @@ export async function chat(
     throw new Error('No local AI model selected. Choose one in setup or settings.');
   }
   const axios = require('axios');
-  const server = await ensureServer(modelId, opts.preferCpu ?? false);
+  const needCtx = estimateCtxSize(systemPrompt, userPrompt, opts.maxTokens);
+  const server = await ensureServer(modelId, opts.preferCpu ?? false, needCtx);
 
   const res = await axios.post(
     `${server.baseUrl}/v1/chat/completions`,

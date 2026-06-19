@@ -6,6 +6,10 @@ import { scanAudioSources, finalizeFileSet, finalizeFileSets, processDroppedFile
 import * as componentManager from './components/component-manager';
 import { profile as detectSystemProfile } from './components/system-probe';
 import * as llamaRuntime from './llama-runtime';
+import * as logger from './logger';
+
+// Start file logging as early as possible so startup + crash output is captured.
+logger.initLogging();
 
 // Dev vs packaged: in dev we load the Angular dev server; packaged we load the
 // built renderer bundle. (app.isPackaged is false when running `electron .`)
@@ -396,6 +400,14 @@ ipcMain.handle('save-config', async (event, config) => {
   }
 });
 
+// Open the rolling log directory in the OS file manager (Settings → Diagnostics).
+ipcMain.handle('open-logs-folder', async () => {
+  const dir = logger.getLogDir();
+  if (!dir) return { success: false, error: 'Logging is not initialized' };
+  const err = await shell.openPath(dir);
+  return err ? { success: false, error: err } : { success: true };
+});
+
 // ============================================================================
 // IPC HANDLERS - OLLAMA
 // ============================================================================
@@ -513,6 +525,11 @@ function convertToWav(inputPath: string, outputPath: string): Promise<string> {
 }
 
 ipcMain.handle('transcribe-audio', async (event, audioPath, modelName = 'base', useGpu = false) => {
+  // GPU transcription and the local AI engine both want VRAM, and the
+  // llama-server stays resident (model + KV cache) between generations. Free it
+  // before a GPU whisper run so Whisper isn't starved into a CUDA OOM.
+  if (useGpu) llamaRuntime.stop();
+
   const whisperPathPre = getWhisperPath(useGpu);
   const downloadedModelPre = componentManager.resolveEntry(`whisper-${modelName}`);
   const modelPathPre = downloadedModelPre || path.join(getWhisperModelsPath(), `ggml-${modelName}.bin`);
