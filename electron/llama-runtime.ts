@@ -28,6 +28,7 @@ interface RunningServer {
   modelId: string;
   port: number;
   baseUrl: string;
+  preferCpu: boolean;
 }
 
 let current: RunningServer | null = null;
@@ -38,10 +39,13 @@ let starting: Promise<RunningServer> | null = null;
 // Engine + model resolution
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The llama-server.exe to use, preferring the CUDA build when installed. */
-function resolveServerExe(): { exe: string; cuda: boolean } | null {
-  const cuda = resolveEntry(LLAMA_CUDA_ID);
-  if (cuda) return { exe: cuda, cuda: true };
+/** The llama-server.exe to use, preferring the CUDA build when installed —
+ *  unless the caller forces CPU (Settings: "Use CPU for AI"). */
+function resolveServerExe(preferCpu = false): { exe: string; cuda: boolean } | null {
+  if (!preferCpu) {
+    const cuda = resolveEntry(LLAMA_CUDA_ID);
+    if (cuda) return { exe: cuda, cuda: true };
+  }
   const cpu = resolveEntry(LLAMA_CPU_ID);
   if (cpu) return { exe: cpu, cuda: false };
   return null;
@@ -91,8 +95,8 @@ async function pollHealth(proc: ChildProcess, port: number, timeoutMs: number): 
   );
 }
 
-async function startServer(modelId: string): Promise<RunningServer> {
-  const engine = resolveServerExe();
+async function startServer(modelId: string, preferCpu = false): Promise<RunningServer> {
+  const engine = resolveServerExe(preferCpu);
   if (!engine) {
     throw new Error(
       'The local AI engine is not installed. Download "Local AI Engine (llama.cpp)" in setup.'
@@ -136,6 +140,7 @@ async function startServer(modelId: string): Promise<RunningServer> {
     modelId,
     port,
     baseUrl: `http://127.0.0.1:${port}`,
+    preferCpu,
   };
 
   // If the process dies, drop our reference so the next call respawns it.
@@ -165,18 +170,23 @@ async function startServer(modelId: string): Promise<RunningServer> {
 
 /** Ensure a server is running for `modelId`, reusing the current one if it
  *  matches and is alive. Returns the running server. */
-async function ensureServer(modelId: string): Promise<RunningServer> {
-  if (current && current.modelId === modelId && current.proc.exitCode === null) {
+async function ensureServer(modelId: string, preferCpu = false): Promise<RunningServer> {
+  if (
+    current &&
+    current.modelId === modelId &&
+    current.preferCpu === preferCpu &&
+    current.proc.exitCode === null
+  ) {
     return current;
   }
   if (starting) {
     const s = await starting;
-    if (s.modelId === modelId && s.proc.exitCode === null) return s;
+    if (s.modelId === modelId && s.preferCpu === preferCpu && s.proc.exitCode === null) return s;
   }
 
-  // Different model (or nothing running): stop the old one, start fresh.
+  // Different model/device (or nothing running): stop the old one, start fresh.
   stop();
-  starting = startServer(modelId);
+  starting = startServer(modelId, preferCpu);
   try {
     return await starting;
   } finally {
@@ -211,13 +221,13 @@ export async function chat(
   modelId: string,
   systemPrompt: string,
   userPrompt: string,
-  opts: { maxTokens?: number; temperature?: number } = {}
+  opts: { maxTokens?: number; temperature?: number; preferCpu?: boolean } = {}
 ): Promise<LocalChatResult> {
   if (!modelId) {
     throw new Error('No local AI model selected. Choose one in setup or settings.');
   }
   const axios = require('axios');
-  const server = await ensureServer(modelId);
+  const server = await ensureServer(modelId, opts.preferCpu ?? false);
 
   const res = await axios.post(
     `${server.baseUrl}/v1/chat/completions`,

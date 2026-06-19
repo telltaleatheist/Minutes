@@ -47,7 +47,7 @@ const CLOUD_MODELS: Record<'claude' | 'openai', { value: string; label: string }
       <div class="setup-overlay">
         <div class="setup-card">
           <div class="setup-card-head">
-            <h2>{{ setup.configMode() ? 'Minutes setup' : 'Set up Minutes' }}</h2>
+            <h2>{{ setup.configMode() ? 'Downloads' : 'Set up Minutes' }}</h2>
             @if (setup.configMode()) {
               <button class="btn btn-ghost btn-icon" title="Close" (click)="close()">
                 <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor">

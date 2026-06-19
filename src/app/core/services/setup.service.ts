@@ -34,10 +34,23 @@ export class SetupService {
 
   openWizard(configMode: boolean): void {
     this.configMode.set(configMode);
+    this.settingsOpen.set(false);
     this.wizardOpen.set(true);
   }
   closeWizard(): void {
     this.wizardOpen.set(false);
+  }
+
+  // ─── Settings overlay ────────────────────────────────────────────────────────
+  // Separate from the download wizard: a quick single page for picking which
+  // provider/models to use by default. The wizard is for browsing & downloading
+  // component options.
+  readonly settingsOpen = signal(false);
+  openSettings(): void {
+    this.settingsOpen.set(true);
+  }
+  closeSettings(): void {
+    this.settingsOpen.set(false);
   }
 
   // ─── Download queue ──────────────────────────────────────────────────────────

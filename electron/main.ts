@@ -16,7 +16,7 @@ let mainWindow;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 1400,
+    width: 933,
     height: 900,
     icon: path.join(app.getAppPath(), 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
     backgroundColor: '#1a1a1a',
@@ -494,7 +494,7 @@ function convertToWav(inputPath: string, outputPath: string): Promise<string> {
   });
 }
 
-ipcMain.handle('transcribe-audio', async (event, audioPath, modelName = 'base') => {
+ipcMain.handle('transcribe-audio', async (event, audioPath, modelName = 'base', useGpu = false) => {
   const whisperPathPre = getWhisperPath();
   const downloadedModelPre = componentManager.resolveEntry(`whisper-${modelName}`);
   const modelPathPre = downloadedModelPre || path.join(getWhisperModelsPath(), `ggml-${modelName}.bin`);
@@ -554,8 +554,10 @@ ipcMain.handle('transcribe-audio', async (event, audioPath, modelName = 'base') 
       '-otxt',           // Output plain text
       '-of', outputBase, // Output file base
       '-pp',             // Print progress
-      '-ng',             // No GPU - use CPU only
     ];
+    // CPU by default; pass GPU through only when the user opted in (requires a
+    // GPU-capable whisper build — the CPU-only build ignores it and stays on CPU).
+    if (!useGpu) args.push('-ng'); // -ng = no GPU
 
     console.log(`[Whisper] Starting transcription: ${audioPath}`);
     console.log(`[Whisper] Command: ${whisperPath} ${args.join(' ')}`);
@@ -664,10 +666,11 @@ ipcMain.handle('transcribe-audio', async (event, audioPath, modelName = 'base') 
 // IPC HANDLERS - AI MEETING NOTES GENERATION
 // ============================================================================
 
-ipcMain.handle('generate-meeting-notes', async (event, transcript, config) => {
-  const { provider, model, localModel, ollamaHost } = config;
-
-  const systemPrompt = `You are an expert meeting note taker.
+// Default system prompt for meeting-notes generation. The user can override it
+// from the Settings page (persisted as config.notesPrompt). Mirrored in the
+// renderer (src/app/core/models/types.ts DEFAULT_NOTES_PROMPT) so Settings can
+// show and reset it — keep the two copies in sync.
+const DEFAULT_NOTES_PROMPT = `You are an expert meeting note taker.
 Your task is to create clear, organized, and comprehensive meeting notes from the provided transcript.
 
 FORMAT FOR EMAIL: The notes should be formatted for easy copying into an email. Use:
@@ -688,11 +691,17 @@ IMPORTANT: Do NOT include an "Attendees" section - the audio transcript cannot r
 Be thorough but concise. Use bullet points for clarity.
 If something is unclear in the transcript, note it as "[unclear]" rather than guessing.`;
 
+ipcMain.handle('generate-meeting-notes', async (event, transcript, config) => {
+  const { provider, model, localModel, ollamaHost, systemPrompt: customPrompt, useGpu } = config;
+
+  // Use the user's saved prompt when present, else the built-in default.
+  const systemPrompt = (customPrompt && String(customPrompt).trim()) || DEFAULT_NOTES_PROMPT;
+
   const userPrompt = `Please create comprehensive meeting notes from the following meeting transcript:\n\n${transcript}`;
 
   try {
     if (provider === 'local' || !provider) {
-      return await generateWithLocal(userPrompt, systemPrompt, localModel);
+      return await generateWithLocal(userPrompt, systemPrompt, localModel, useGpu);
     } else if (provider === 'ollama') {
       return await generateWithOllama(userPrompt, systemPrompt, model, ollamaHost);
     } else if (provider === 'claude') {
@@ -708,7 +717,7 @@ If something is unclear in the transcript, note it as "[unclear]" rather than gu
   }
 });
 
-async function generateWithLocal(prompt, systemPrompt, modelId) {
+async function generateWithLocal(prompt, systemPrompt, modelId, useGpu = false) {
   // Fall back to the first installed local model if none was explicitly chosen.
   let resolvedId = modelId;
   if (!resolvedId) {
@@ -720,11 +729,12 @@ async function generateWithLocal(prompt, systemPrompt, modelId) {
     throw new Error('No local AI model is installed. Download one in setup first.');
   }
 
-  console.log(`[AI] Generating with local engine: ${resolvedId}`);
+  console.log(`[AI] Generating with local engine: ${resolvedId} (${useGpu ? 'GPU' : 'CPU'})`);
 
   const { text } = await llamaRuntime.chat(resolvedId, systemPrompt, prompt, {
     maxTokens: 4000,
     temperature: 0.7,
+    preferCpu: !useGpu,
   });
 
   return {

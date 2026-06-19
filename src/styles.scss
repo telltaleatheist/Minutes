@@ -619,12 +619,36 @@ select.form-control {
 }
 
 .settings-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
   font-size: 0.875rem;
   font-weight: 600;
   color: var(--text-primary);
   margin-bottom: 1rem;
   padding-bottom: 0.5rem;
   border-bottom: 1px solid var(--border-light);
+}
+
+/* Settings overlay: stacked sections, device toggle, prompt editor */
+.settings-section + .settings-section { margin-top: 1rem; }
+.settings-section .sub {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 0.75rem;
+}
+
+.device-toggle { display: inline-flex; gap: 0.5rem; }
+
+.prompt-area {
+  width: 100%;
+  font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+  resize: vertical;
+  min-height: 180px;
 }
 
 /* ============================================================================

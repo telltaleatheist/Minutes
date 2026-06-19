@@ -22,7 +22,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   checkOllama: (host) => ipcRenderer.invoke('check-ollama', host),
 
   // Transcription
-  transcribeAudio: (audioPath, model) => ipcRenderer.invoke('transcribe-audio', audioPath, model),
+  transcribeAudio: (audioPath, model, useGpu) => ipcRenderer.invoke('transcribe-audio', audioPath, model, useGpu),
 
   // AI Meeting Notes
   generateMeetingNotes: (transcript, config) => ipcRenderer.invoke('generate-meeting-notes', transcript, config),

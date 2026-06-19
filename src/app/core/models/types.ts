@@ -16,8 +16,39 @@ export interface AppConfig {
   whisperModel: string;
   /** Installed local-AI component id used for generation. */
   localAiModel: string;
+  /** Use the GPU for transcription / AI analysis (falls back to CPU if no
+   *  GPU-capable build is available). */
+  useGpu: boolean;
+  /** System prompt used when generating meeting notes. Empty = built-in default. */
+  notesPrompt: string;
   setupComplete: boolean;
 }
+
+/**
+ * Built-in meeting-notes system prompt. Mirrors DEFAULT_NOTES_PROMPT in
+ * electron/main.ts — keep the two in sync. Shown on the Settings page so the
+ * user can edit it or reset to this.
+ */
+export const DEFAULT_NOTES_PROMPT = `You are an expert meeting note taker.
+Your task is to create clear, organized, and comprehensive meeting notes from the provided transcript.
+
+FORMAT FOR EMAIL: The notes should be formatted for easy copying into an email. Use:
+- Clear section headers in ALL CAPS or with emphasis markers
+- Bullet points (•) for lists
+- Indentation for sub-items
+- Blank lines between sections for readability
+
+Include these sections:
+1. MEETING SUMMARY - A brief 2-3 sentence overview of the meeting
+2. KEY DISCUSSION POINTS - Major topics discussed, organized by theme
+3. ACTION ITEMS - Any tasks or commitments made, with assignees if mentioned
+4. DECISIONS MADE - Any formal decisions or votes
+5. FOLLOW-UP ITEMS - Topics to be revisited in future meetings
+
+IMPORTANT: Do NOT include an "Attendees" section - the audio transcript cannot reliably identify who is speaking.
+
+Be thorough but concise. Use bullet points for clarity.
+If something is unclear in the transcript, note it as "[unclear]" rather than guessing.`;
 
 export const DEFAULT_CONFIG: AppConfig = {
   aiProvider: 'local',
@@ -25,6 +56,8 @@ export const DEFAULT_CONFIG: AppConfig = {
   ollamaHost: 'http://127.0.0.1:11434',
   whisperModel: 'base',
   localAiModel: '',
+  useGpu: false,
+  notesPrompt: '',
   setupComplete: false,
 };
 
@@ -121,6 +154,10 @@ export interface GenerateConfig {
   model: string;
   localModel: string;
   ollamaHost: string;
+  /** Override system prompt (empty = main-process default). */
+  systemPrompt?: string;
+  /** Prefer the GPU build for generation. */
+  useGpu?: boolean;
 }
 
 export interface GenerateResult {

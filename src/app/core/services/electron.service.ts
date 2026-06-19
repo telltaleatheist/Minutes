@@ -56,8 +56,8 @@ export class ElectronService {
   }
 
   // ─── Transcription ───────────────────────────────────────────────────────────
-  transcribeAudio(audioPath: string, model: string): Promise<TranscribeResult> {
-    return this.api.transcribeAudio(audioPath, model);
+  transcribeAudio(audioPath: string, model: string, useGpu = false): Promise<TranscribeResult> {
+    return this.api.transcribeAudio(audioPath, model, useGpu);
   }
 
   // ─── Notes ───────────────────────────────────────────────────────────────────

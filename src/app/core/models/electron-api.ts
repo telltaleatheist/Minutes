@@ -38,7 +38,7 @@ export interface ElectronAPI {
   checkOllama(host: string): Promise<OllamaResult>;
 
   // Transcription
-  transcribeAudio(audioPath: string, model: string): Promise<TranscribeResult>;
+  transcribeAudio(audioPath: string, model: string, useGpu?: boolean): Promise<TranscribeResult>;
 
   // AI meeting notes
   generateMeetingNotes(transcript: string, config: GenerateConfig): Promise<GenerateResult>;

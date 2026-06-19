@@ -234,6 +234,7 @@ export class StudioComponent implements OnInit {
       const result = await this.electron.transcribeAudio(
         this.currentAudioPath(),
         this.config.config().whisperModel,
+        this.config.config().useGpu,
       );
       this.setTranscriptionProgress({ percent: 100, totalSec: 1, processedSec: 1, etaSec: 0 });
       this.transcript.set(result.transcript);
@@ -278,6 +279,8 @@ export class StudioComponent implements OnInit {
         model: cfg.aiModel,
         localModel: cfg.localAiModel,
         ollamaHost: cfg.ollamaHost,
+        systemPrompt: cfg.notesPrompt,
+        useGpu: cfg.useGpu,
       });
       this.clearGenInterval();
       this.progressPercent.set(100);
