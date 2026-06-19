@@ -55,7 +55,9 @@
       "output": "build"
     },
     "files": [
-      "dist/**/*"
+      "dist/**/*",
+      "assets/icon.png",
+      "assets/icon.ico"
     ],
     "extraResources": [
       {
@@ -67,7 +69,8 @@
       "target": [
         "nsis",
         "portable"
-      ]
+      ],
+      "icon": "assets/icon.ico"
     },
     "nsis": {
       "oneClick": false,
@@ -83,7 +86,8 @@
     },
     "mac": {
       "target": "dmg",
-      "category": "public.app-category.productivity"
+      "category": "public.app-category.productivity",
+      "icon": "assets/icon.icns"
     },
     "dmg": {
       "artifactName": "Minutes-${arch}.dmg"

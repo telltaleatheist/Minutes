@@ -18,6 +18,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
+    icon: path.join(app.getAppPath(), 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
     backgroundColor: '#1a1a1a',
     show: false,
     webPreferences: {
