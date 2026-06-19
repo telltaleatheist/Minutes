@@ -6,6 +6,7 @@ import type {
   ComponentStatus,
   GenerateConfig,
   GenerateResult,
+  GenerationProgress,
   InstallProgress,
   InstallResult,
   OllamaResult,
@@ -93,5 +94,9 @@ export class ElectronService {
   onComponentProgress(cb: (data: InstallProgress) => void): () => void {
     this.api.onComponentProgress(cb);
     return () => this.api.removeComponentProgressListener();
+  }
+  onGenerationProgress(cb: (data: GenerationProgress) => void): () => void {
+    this.api.onGenerationProgress(cb);
+    return () => this.api.removeGenerationProgressListener();
   }
 }

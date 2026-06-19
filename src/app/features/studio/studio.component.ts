@@ -11,19 +11,10 @@ import { ElectronService } from '../../core/services/electron.service';
 import { ConfigService } from '../../core/services/config.service';
 import { ModelsService } from '../../core/services/models.service';
 import { ToastService } from '../../core/services/toast.service';
-import { TranscriptionProgress } from '../../core/models/types';
+import { GenerationProgress, TranscriptionProgress } from '../../core/models/types';
 import { formatClock } from '../../core/utils/format';
 
 const ACCEPT = '.wav,.mp3,.m4a,.flac,.ogg,.aac,.wma,.mp4,.mov,.mkv,.webm,.avi';
-
-const GEN_MESSAGES = [
-  'Connecting to AI...',
-  'Analyzing transcript...',
-  'Identifying key topics...',
-  'Extracting action items...',
-  'Formatting meeting notes...',
-  'Finalizing notes...',
-];
 
 /**
  * The home screen: drop a file, then transcribe → generate notes → save. Owns
@@ -97,7 +88,7 @@ const GEN_MESSAGES = [
           <div class="step-number">1</div>
           <div class="step-content">
             <div class="step-title">Transcribe Audio</div>
-            <div class="step-description">Convert audio to text using Whisper AI</div>
+            <div class="step-description">Convert audio to text</div>
           </div>
           <button class="btn btn-primary btn-sm" [disabled]="!currentAudioPath() || transcribing()" (click)="transcribe()">
             @if (transcribing()) {
@@ -146,6 +137,20 @@ const GEN_MESSAGES = [
           </div>
         </div>
       }
+
+      @if (transcribeMs() || generateMs()) {
+        <div class="timings">
+          @if (transcribeMs()) {
+            <span>Transcription <strong>{{ fmtMs(transcribeMs()) }}</strong></span>
+          }
+          @if (generateMs()) {
+            <span>AI synthesis <strong>{{ fmtMs(generateMs()) }}</strong></span>
+          }
+          @if (transcribeMs() && generateMs()) {
+            <span class="timings-total">Total <strong>{{ fmtMs(transcribeMs() + generateMs()) }}</strong></span>
+          }
+        </div>
+      }
     </div>
 
     <div class="panel">
@@ -155,13 +160,13 @@ const GEN_MESSAGES = [
           Copy
         </button>
       </div>
-      <div class="notes-output" style="max-height: 200px;">
-        @if (transcript()) {
-          {{ transcript() }}
-        } @else {
-          <p class="text-tertiary">Transcript will appear here after transcription...</p>
-        }
-      </div>
+      <textarea
+        class="form-control transcript-input"
+        rows="8"
+        placeholder="Paste a transcript here, or transcribe an audio file above — then click Generate."
+        [value]="transcript()"
+        (input)="transcript.set($any($event.target).value)"
+      ></textarea>
     </div>
 
     <div class="panel">
@@ -211,6 +216,10 @@ export class StudioComponent implements OnInit {
   readonly saving = signal(false);
   readonly saved = signal(false);
 
+  // Elapsed time (ms) for the last transcription / AI synthesis. 0 = not run yet.
+  readonly transcribeMs = signal(0);
+  readonly generateMs = signal(0);
+
   readonly progressVisible = signal(false);
   readonly progressPercent = signal(0);
   readonly progressStatus = signal('Processing...');
@@ -218,18 +227,22 @@ export class StudioComponent implements OnInit {
   readonly dragOver = signal(false);
 
   private outputDirectory = '';
-  private genInterval: ReturnType<typeof setInterval> | null = null;
+  private lastAudioSec = 0; // most recent audio duration seen during transcription
 
   ngOnInit(): void {
-    // Real transcription progress arrives over IPC (whisper segment stamps + 1s
-    // heartbeat). Register once; clean up on destroy.
-    const unsub = this.electron.onTranscriptionProgress((d) => this.setTranscriptionProgress(d));
-    this.destroyRef.onDestroy(unsub);
-    this.destroyRef.onDestroy(() => this.clearGenInterval());
+    // Real progress arrives over IPC — transcription (whisper segment stamps +
+    // 1s heartbeat) and generation (per-topic synthesis steps). Register once.
+    this.destroyRef.onDestroy(this.electron.onTranscriptionProgress((d) => this.setTranscriptionProgress(d)));
+    this.destroyRef.onDestroy(this.electron.onGenerationProgress((d) => this.setGenerationProgress(d)));
 
     void this.electron.getDefaultDirectories().then((dirs) => {
       this.outputDirectory = dirs.output || '';
     });
+  }
+
+  private setGenerationProgress(d: GenerationProgress): void {
+    this.progressPercent.set(Math.max(0, Math.min(100, Math.round(d.percent || 0))));
+    this.progressStatus.set(d.message || 'Generating…');
   }
 
   // ─── File loading ────────────────────────────────────────────────────────────
@@ -258,6 +271,8 @@ export class StudioComponent implements OnInit {
     this.transcript.set('');
     this.meetingNotes.set('');
     this.saved.set(false);
+    this.transcribeMs.set(0);
+    this.generateMs.set(0);
     this.toast.show('success', 'File Loaded', `Ready to transcribe: ${this.currentFileName()}`);
   }
 
@@ -267,12 +282,15 @@ export class StudioComponent implements OnInit {
     this.transcribing.set(true);
     this.progressVisible.set(true);
     this.setTranscriptionProgress({ percent: 0 });
+    this.lastAudioSec = 0;
+    const model = this.config.config().whisperModel;
+    const useGpu = this.config.config().useGpu;
+    const start = Date.now();
     try {
-      const result = await this.electron.transcribeAudio(
-        this.currentAudioPath(),
-        this.config.config().whisperModel,
-        this.config.config().useGpu,
-      );
+      const result = await this.electron.transcribeAudio(this.currentAudioPath(), model, useGpu);
+      const elapsedMs = Date.now() - start;
+      this.transcribeMs.set(elapsedMs);
+      void this.calibrateSpeed(model, useGpu, elapsedMs);
       this.setTranscriptionProgress({ percent: 100, totalSec: 1, processedSec: 1, etaSec: 0 });
       this.transcript.set(result.transcript);
       this.toast.show('success', 'Transcription Complete', 'Audio has been transcribed successfully');
@@ -285,6 +303,7 @@ export class StudioComponent implements OnInit {
   }
 
   private setTranscriptionProgress(data: TranscriptionProgress): void {
+    if (data.totalSec && data.totalSec > 1) this.lastAudioSec = data.totalSec;
     const percent = Math.max(0, Math.min(100, Math.round(data.percent || 0)));
     this.progressPercent.set(percent);
 
@@ -295,7 +314,7 @@ export class StudioComponent implements OnInit {
     } else if (data.elapsedSec) {
       status = `Transcribing · ${formatClock(data.elapsedSec)} elapsed`;
     } else {
-      status = 'Loading Whisper model...';
+      status = 'Loading transcription model...';
     }
     this.progressStatus.set(status);
   }
@@ -306,10 +325,10 @@ export class StudioComponent implements OnInit {
     this.generating.set(true);
     this.progressVisible.set(true);
     this.progressPercent.set(0);
-    this.progressStatus.set(GEN_MESSAGES[0]);
-    this.startGenInterval();
+    this.progressStatus.set('Finding topics…');
 
     const cfg = this.config.config();
+    const start = Date.now();
     try {
       const result = await this.electron.generateMeetingNotes(this.transcript(), {
         provider: cfg.aiProvider,
@@ -319,36 +338,16 @@ export class StudioComponent implements OnInit {
         systemPrompt: cfg.notesPrompt,
         useGpu: cfg.useGpu,
       });
-      this.clearGenInterval();
+      this.generateMs.set(Date.now() - start);
       this.progressPercent.set(100);
       this.progressStatus.set('Notes generated!');
       this.meetingNotes.set(result.notes);
       this.toast.show('success', 'Generation Complete', `Notes generated using ${result.provider}/${result.model}`);
     } catch (err) {
-      this.clearGenInterval();
       this.toast.show('error', 'Generation Failed', this.msg(err));
     } finally {
       this.generating.set(false);
       setTimeout(() => this.progressVisible.set(false), 1000);
-    }
-  }
-
-  private startGenInterval(): void {
-    let pct = 0;
-    let messageIndex = 0;
-    this.genInterval = setInterval(() => {
-      if (pct >= 90) return;
-      pct += Math.random() * 3;
-      if (pct > (messageIndex + 1) * 15 && messageIndex < GEN_MESSAGES.length - 1) messageIndex++;
-      this.progressPercent.set(Math.round(Math.min(pct, 90)));
-      this.progressStatus.set(GEN_MESSAGES[messageIndex]);
-    }, 400);
-  }
-
-  private clearGenInterval(): void {
-    if (this.genInterval) {
-      clearInterval(this.genInterval);
-      this.genInterval = null;
     }
   }
 
@@ -381,6 +380,21 @@ export class StudioComponent implements OnInit {
       .writeText(text)
       .then(() => this.toast.show('success', 'Copied', `${name} copied to clipboard`))
       .catch(() => this.toast.show('error', 'Error', 'Failed to copy to clipboard'));
+  }
+
+  fmtMs(ms: number): string {
+    return formatClock(Math.round(ms / 1000));
+  }
+
+  /** Record the measured real-time factor so the model picker shows a real,
+   *  personalized speed estimate next time. No-op if we never saw a duration. */
+  private async calibrateSpeed(model: string, useGpu: boolean, elapsedMs: number): Promise<void> {
+    if (this.lastAudioSec <= 1) return;
+    const rtf = elapsedMs / 1000 / this.lastAudioSec;
+    if (!isFinite(rtf) || rtf <= 0) return;
+    const key = `${model}|${useGpu ? 'gpu' : 'cpu'}`;
+    const map = { ...(this.config.config().transcriptionRtf ?? {}), [key]: rtf };
+    await this.config.save({ transcriptionRtf: map });
   }
 
   private msg(err: unknown): string {

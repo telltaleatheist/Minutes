@@ -651,6 +651,29 @@ select.form-control {
 }
 .model-bar .form-group { margin-bottom: 0; }
 
+/* Run timings (transcription / AI synthesis / total) */
+.timings {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  margin-top: 1rem;
+  padding-top: 0.875rem;
+  border-top: 1px solid var(--border-light);
+  font-size: 0.8125rem;
+  color: var(--text-tertiary);
+}
+.timings strong { color: var(--text-secondary); font-weight: 600; margin-left: 0.25rem; }
+.timings-total strong { color: var(--accent-orange); }
+
+/* Editable transcript box (paste or transcribe) */
+.transcript-input {
+  width: 100%;
+  min-height: 180px;
+  resize: vertical;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
 .prompt-area {
   width: 100%;
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);

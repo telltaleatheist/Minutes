@@ -39,11 +39,11 @@ interface WhisperSpec {
 }
 
 const WHISPER_SPECS: WhisperSpec[] = [
-  { id: 'whisper-tiny', name: 'Whisper Tiny', model: 'tiny', bytes: 77_700_000, description: 'Fastest, lowest accuracy. Good for quick drafts.' },
-  { id: 'whisper-base', name: 'Whisper Base', model: 'base', bytes: 147_951_465, description: 'Fast, modest accuracy.' },
-  { id: 'whisper-small', name: 'Whisper Small', model: 'small', bytes: 487_601_967, description: 'Balanced speed and accuracy. Recommended default.', recommended: true },
-  { id: 'whisper-medium', name: 'Whisper Medium', model: 'medium', bytes: 1_533_763_059, description: 'Higher accuracy, noticeably slower on CPU.' },
-  { id: 'whisper-large-v3', name: 'Whisper Large v3', model: 'large-v3', bytes: 3_095_000_000, description: 'Best accuracy, heavy. Practical mainly with a GPU.' },
+  { id: 'whisper-tiny', name: 'Tiny', model: 'tiny', bytes: 77_700_000, description: 'Fastest, lowest accuracy. Good for quick drafts.' },
+  { id: 'whisper-base', name: 'Base', model: 'base', bytes: 147_951_465, description: 'Fast, modest accuracy.' },
+  { id: 'whisper-small', name: 'Small', model: 'small', bytes: 487_601_967, description: 'Balanced speed and accuracy. Recommended default.', recommended: true },
+  { id: 'whisper-medium', name: 'Medium', model: 'medium', bytes: 1_533_763_059, description: 'Higher accuracy, noticeably slower on CPU.' },
+  { id: 'whisper-large-v3', name: 'Large v3', model: 'large-v3', bytes: 3_095_000_000, description: 'Best accuracy, heavy. Practical mainly with a GPU.' },
 ];
 
 function whisperComponents(): OptionalComponent[] {
@@ -83,7 +83,7 @@ const ffmpeg: OptionalComponent = {
   id: 'ffmpeg',
   name: 'FFmpeg & FFprobe',
   description:
-    'Extracts audio from video and converts any input to the 16 kHz mono WAV whisper needs. Required for video and most compressed audio.',
+    'Extracts audio from video and converts any input to the 16 kHz mono WAV the transcription engine needs. Required for video and most compressed audio.',
   category: 'tool',
   // Downloadable on Windows and macOS; on Linux we fall back to a system ffmpeg,
   // so it isn't required there and doesn't gate setup.
@@ -133,9 +133,9 @@ const ffmpeg: OptionalComponent = {
 
 const whisperEngine: OptionalComponent = {
   id: 'whisper',
-  name: 'Whisper (speech-to-text engine)',
+  name: 'Transcription engine',
   description:
-    'The whisper.cpp engine that transcribes audio to text on-device. Required to transcribe.',
+    'The on-device engine that transcribes audio to text. Required to transcribe.',
   category: 'tool',
   required: PLATFORM === 'win32' || PLATFORM === 'darwin',
   sizeBytes: 1_982_464,

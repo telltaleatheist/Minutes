@@ -55,7 +55,7 @@ import { AppConfig, DEFAULT_NOTES_PROMPT } from '../../core/models/types';
                   <span class="form-label mt-1 text-tertiary">Used for generating notes. Spans local, Ollama, and cloud models.</span>
                 </div>
                 <div class="form-group">
-                  <label class="form-label">Transcription model (Whisper)</label>
+                  <label class="form-label">Transcription model</label>
                   <select class="form-control" [value]="whisperModel()" (change)="whisperModel.set($any($event.target).value)">
                     @for (o of models.whisperChoices(); track o.value) {
                       <option [value]="o.value">{{ o.label }}</option>

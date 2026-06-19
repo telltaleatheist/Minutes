@@ -186,7 +186,7 @@ const CLOUD_MODELS: Record<'claude' | 'openai', { value: string; label: string }
                   <div class="step-head">
                     <h3>Choose a transcription model</h3>
                     <p class="sub">
-                      Whisper converts your audio to text. Larger models are more accurate but
+                      Converts your audio to text. Larger models are more accurate but
                       slower. Pick one or more.
                     </p>
                   </div>

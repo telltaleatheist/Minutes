@@ -14,6 +14,7 @@ import type {
   SystemProfile,
   TranscribeResult,
   TranscriptionProgress,
+  GenerationProgress,
 } from './types';
 
 export interface ElectronAPI {
@@ -62,6 +63,8 @@ export interface ElectronAPI {
   removeProgressListener(): void;
   onTranscriptionProgress(callback: (data: TranscriptionProgress) => void): void;
   removeTranscriptionProgressListener(): void;
+  onGenerationProgress(callback: (data: GenerationProgress) => void): void;
+  removeGenerationProgressListener(): void;
 }
 
 declare global {

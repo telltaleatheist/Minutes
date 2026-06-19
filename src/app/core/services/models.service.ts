@@ -1,7 +1,15 @@
 import { computed, inject, Injectable, signal } from '@angular/core';
 import { ComponentService } from './component.service';
+import { ConfigService } from './config.service';
 import { ElectronService } from './electron.service';
 import { AiProvider, AppConfig } from '../models/types';
+
+// Fallback minutes-per-hour-of-audio when we have no measured run yet. Rough,
+// hardware-dependent; replaced by a real measurement once a model has been run.
+const STATIC_MIN_PER_HOUR: Record<'gpu' | 'cpu', Record<string, number>> = {
+  gpu: { tiny: 1.5, base: 2.5, small: 4, medium: 6.5, 'large-v3': 9 },
+  cpu: { tiny: 5, base: 12, small: 30, medium: 80, 'large-v3': 160 },
+};
 
 /** One selectable AI model, flattened across providers. `value` is the unified
  *  key stored/compared as `<provider>:<model>` (model may itself contain ':',
@@ -40,17 +48,35 @@ const CLOUD_MODELS: Record<'claude' | 'openai', { value: string; label: string }
 @Injectable({ providedIn: 'root' })
 export class ModelsService {
   private readonly components = inject(ComponentService);
+  private readonly config = inject(ConfigService);
   private readonly electron = inject(ElectronService);
 
   readonly ollamaModels = signal<{ id: string; name: string }[]>([]);
 
-  /** Installed transcription models, value = short name ('base', 'small', …). */
-  readonly whisperChoices = computed<WhisperChoice[]>(() =>
-    this.components
+  /** Installed transcription models, value = short name ('base', 'small', …).
+   *  Label carries an approximate speed (minutes per hour of audio) for the
+   *  current device, measured if we've run it before, else a static estimate. */
+  readonly whisperChoices = computed<WhisperChoice[]>(() => {
+    const cfg = this.config.config();
+    const device: 'gpu' | 'cpu' = cfg.useGpu ? 'gpu' : 'cpu';
+    return this.components
       .byCategory('whisper')
       .filter((s) => s.state === 'installed')
-      .map((s) => ({ value: s.component.id.replace('whisper-', ''), label: s.component.name })),
-  );
+      .map((s) => {
+        const short = s.component.id.replace('whisper-', '');
+        const est = this.minutesPerHour(short, device, cfg.transcriptionRtf);
+        const label = est ? `${s.component.name} — ~${est} min/hr` : s.component.name;
+        return { value: short, label };
+      });
+  });
+
+  /** Estimated minutes to transcribe one hour of audio, formatted compactly. */
+  private minutesPerHour(short: string, device: 'gpu' | 'cpu', rtf?: Record<string, number>): string | null {
+    const measured = rtf?.[`${short}|${device}`];
+    const mph = measured != null ? measured * 60 : STATIC_MIN_PER_HOUR[device][short];
+    if (!mph) return null;
+    return mph >= 10 ? String(Math.round(mph)) : String(Math.round(mph * 10) / 10);
+  }
 
   /** Every AI model the user can pick right now, across providers. */
   readonly aiChoices = computed<AiChoice[]>(() => {

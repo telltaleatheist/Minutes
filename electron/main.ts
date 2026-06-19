@@ -6,6 +6,7 @@ import { scanAudioSources, finalizeFileSet, finalizeFileSets, processDroppedFile
 import * as componentManager from './components/component-manager';
 import { profile as detectSystemProfile } from './components/system-probe';
 import * as llamaRuntime from './llama-runtime';
+import { synthesizeNotes } from './notes-synthesis';
 import * as logger from './logger';
 
 // Start file logging as early as possible so startup + crash output is captured.
@@ -535,11 +536,11 @@ ipcMain.handle('transcribe-audio', async (event, audioPath, modelName = 'base', 
   const modelPathPre = downloadedModelPre || path.join(getWhisperModelsPath(), `ggml-${modelName}.bin`);
   if (!fs.existsSync(whisperPathPre)) {
     throw new Error(
-      `Whisper engine not found. Download it from the setup screen (or install whisper.cpp with "brew install whisper-cpp").`
+      `Transcription engine not found. Download it from the Downloads screen.`
     );
   }
   if (!fs.existsSync(modelPathPre)) {
-    throw new Error(`Whisper model not found at ${modelPathPre}. Download a model from the setup screen.`);
+    throw new Error(`Transcription model not found. Download one from the Downloads screen.`);
   }
 
   // Normalize the input to 16 kHz mono WAV before transcribing. If ffmpeg isn't
@@ -566,12 +567,12 @@ ipcMain.handle('transcribe-audio', async (event, audioPath, modelName = 'base', 
     const modelPath = downloadedModel || path.join(getWhisperModelsPath(), `ggml-${modelName}.bin`);
 
     if (!fs.existsSync(whisperPath)) {
-      reject(new Error(`Whisper binary not found at ${whisperPath}`));
+      reject(new Error(`Transcription engine not found at ${whisperPath}`));
       return;
     }
 
     if (!fs.existsSync(modelPath)) {
-      reject(new Error(`Whisper model not found at ${modelPath}`));
+      reject(new Error(`Transcription model not found at ${modelPath}`));
       return;
     }
 
@@ -685,7 +686,7 @@ ipcMain.handle('transcribe-audio', async (event, audioPath, modelName = 'base', 
           reject(new Error('Transcription output file not found'));
         }
       } else {
-        reject(new Error(`Whisper exited with code ${code}: ${stderrTail}`));
+        reject(new Error(`Transcription engine exited with code ${code}: ${stderrTail}`));
       }
     });
 
@@ -705,47 +706,51 @@ ipcMain.handle('transcribe-audio', async (event, audioPath, modelName = 'base', 
 // from the Settings page (persisted as config.notesPrompt). Mirrored in the
 // renderer (src/app/core/models/types.ts DEFAULT_NOTES_PROMPT) so Settings can
 // show and reset it — keep the two copies in sync.
-const DEFAULT_NOTES_PROMPT = `You are an expert meeting note taker.
-Your task is to create clear, organized, and comprehensive meeting notes from the provided transcript.
+const DEFAULT_NOTES_PROMPT = `You are an expert meeting-notes writer. You will be given notes extracted from a meeting, organized by topic. Combine them into a single, clear set of meeting minutes.
 
-FORMAT FOR EMAIL: The notes should be formatted for easy copying into an email. Use:
-- Clear section headers in ALL CAPS or with emphasis markers
-- Bullet points (•) for lists
-- Indentation for sub-items
-- Blank lines between sections for readability
+FORMAT FOR EMAIL: format for easy copying into an email — clear section headers, bullet points (•) for lists, indentation for sub-items, and a blank line between sections.
 
-Include these sections:
-1. MEETING SUMMARY - A brief 2-3 sentence overview of the meeting
-2. KEY DISCUSSION POINTS - Major topics discussed, organized by theme
-3. ACTION ITEMS - Any tasks or commitments made, with assignees if mentioned
-4. DECISIONS MADE - Any formal decisions or votes
-5. FOLLOW-UP ITEMS - Topics to be revisited in future meetings
+Structure the minutes as:
+1. SUMMARY — a 2-4 sentence overview of the whole meeting
+2. KEY DISCUSSION POINTS — the main topics discussed, organized by topic
+3. ACTION ITEMS — consolidated across the meeting, with an owner only when the words name one; merge duplicates
+4. DECISIONS MADE — only decisions or agreements the group EXPLICITLY reached
+5. FOLLOW-UP ITEMS — open questions or things to revisit later
 
-IMPORTANT: Do NOT include an "Attendees" section - the audio transcript cannot reliably identify who is speaking.
-
-Be thorough but concise. Use bullet points for clarity.
-If something is unclear in the transcript, note it as "[unclear]" rather than guessing.`;
+Rules:
+- Use only information present in the provided notes. Do not infer or invent.
+- A decision is only something the group clearly agreed on or settled. Anything merely proposed, debated, pushed back on, or left unresolved is NOT a decision — keep it under Key Discussion Points. If nothing was firmly decided, omit DECISIONS MADE entirely.
+- Follow-up items are open questions or things to revisit — do not repeat anything already listed as an Action Item.
+- The transcript does not identify speakers. Give an action item an owner only when the words explicitly name who is responsible ("Kevin will…", "Owen, can you…"). Never infer the speaker; if no name is given, leave the item unattributed.
+- Omit any section that has no content — do not write "None".
+- Do not include an "Attendees" section.
+- Output only the meeting notes — no preamble or commentary (e.g. do not begin with "Here are the notes").`;
 
 ipcMain.handle('generate-meeting-notes', async (event, transcript, config) => {
   const { provider, model, localModel, ollamaHost, systemPrompt: customPrompt, useGpu } = config;
 
-  // Use the user's saved prompt when present, else the built-in default.
-  const systemPrompt = (customPrompt && String(customPrompt).trim()) || DEFAULT_NOTES_PROMPT;
+  // The user's saved prompt (else the built-in default) is the per-topic
+  // meeting-notes generator. The topic-finding/orchestration prompts live in
+  // notes-synthesis.ts and are never user-facing.
+  const notesPrompt = (customPrompt && String(customPrompt).trim()) || DEFAULT_NOTES_PROMPT;
 
-  const userPrompt = `Please create comprehensive meeting notes from the following meeting transcript:\n\n${transcript}`;
+  // Route one (systemPrompt, userPrompt) call to the active provider and return
+  // its text. Shared by every pass of the synthesis protocol.
+  const callModel = async (sys: string, user: string): Promise<string> => {
+    if (provider === 'local' || !provider) return (await generateWithLocal(user, sys, localModel, useGpu)).notes;
+    if (provider === 'ollama') return (await generateWithOllama(user, sys, model, ollamaHost)).notes;
+    if (provider === 'claude') return (await generateWithClaude(user, sys, model)).notes;
+    if (provider === 'openai') return (await generateWithOpenAI(user, sys, model)).notes;
+    throw new Error(`Unknown provider: ${provider}`);
+  };
+
+  const onProgress = (percent: number, message: string) => {
+    mainWindow?.webContents.send('generation-progress', { percent, message });
+  };
 
   try {
-    if (provider === 'local' || !provider) {
-      return await generateWithLocal(userPrompt, systemPrompt, localModel, useGpu);
-    } else if (provider === 'ollama') {
-      return await generateWithOllama(userPrompt, systemPrompt, model, ollamaHost);
-    } else if (provider === 'claude') {
-      return await generateWithClaude(userPrompt, systemPrompt, model);
-    } else if (provider === 'openai') {
-      return await generateWithOpenAI(userPrompt, systemPrompt, model);
-    } else {
-      throw new Error(`Unknown provider: ${provider}`);
-    }
+    const notes = await synthesizeNotes(transcript, notesPrompt, callModel, onProgress);
+    return { success: true, notes, provider: provider || 'local', model: localModel || model || '' };
   } catch (error) {
     console.error('Error generating meeting notes:', error);
     throw error;

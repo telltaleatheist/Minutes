@@ -57,5 +57,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   removeTranscriptionProgressListener: () => {
     ipcRenderer.removeAllListeners('transcription-progress');
+  },
+  onGenerationProgress: (callback) => {
+    ipcRenderer.on('generation-progress', (event, data) => callback(data));
+  },
+  removeGenerationProgressListener: () => {
+    ipcRenderer.removeAllListeners('generation-progress');
   }
 });
