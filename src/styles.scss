@@ -642,6 +642,15 @@ select.form-control {
 
 .device-toggle { display: inline-flex; gap: 0.5rem; }
 
+/* Main-screen quick model pickers */
+.model-bar {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 1rem;
+  margin-top: 1rem;
+}
+.model-bar .form-group { margin-bottom: 0; }
+
 .prompt-area {
   width: 100%;
   font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, Consolas, monospace);

@@ -7,6 +7,7 @@ import { ToastHostComponent } from './components/toast-host/toast-host.component
 import { ThemeService } from './core/services/theme.service';
 import { ConfigService } from './core/services/config.service';
 import { ComponentService } from './core/services/component.service';
+import { ModelsService } from './core/services/models.service';
 import { SetupService } from './core/services/setup.service';
 
 @Component({
@@ -68,12 +69,16 @@ export class App implements OnInit {
   readonly setup = inject(SetupService);
   private readonly config = inject(ConfigService);
   private readonly components = inject(ComponentService);
+  private readonly models = inject(ModelsService);
 
   async ngOnInit(): Promise<void> {
     this.theme.init();
     await this.config.load();
     await this.components.refreshSystem();
     await this.components.refresh();
+    // Populate the Ollama model list (if a server is reachable) so the model
+    // pickers can offer it; silent no-op when Ollama isn't running.
+    void this.models.refreshOllama(this.config.config().ollamaHost);
 
     // Gate: hold on the wizard until setup is finished AND required tools exist.
     if (!this.config.config().setupComplete || !this.setup.requiredInstalled()) {

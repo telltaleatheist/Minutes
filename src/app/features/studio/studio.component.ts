@@ -1,6 +1,7 @@
 import {
   ChangeDetectionStrategy,
   Component,
+  computed,
   DestroyRef,
   inject,
   OnInit,
@@ -8,6 +9,7 @@ import {
 } from '@angular/core';
 import { ElectronService } from '../../core/services/electron.service';
 import { ConfigService } from '../../core/services/config.service';
+import { ModelsService } from '../../core/services/models.service';
 import { ToastService } from '../../core/services/toast.service';
 import { TranscriptionProgress } from '../../core/models/types';
 import { formatClock } from '../../core/utils/format';
@@ -66,6 +68,29 @@ const GEN_MESSAGES = [
 
     <div class="panel">
       <div class="panel-header"><h2 class="panel-title">Generate Meeting Notes</h2></div>
+
+      <div class="model-bar">
+        <div class="form-group">
+          <label class="form-label">Transcription model</label>
+          <select class="form-control" [value]="whisperValue()" (change)="onWhisperChange($any($event.target).value)">
+            @for (o of models.whisperChoices(); track o.value) {
+              <option [value]="o.value">{{ o.label }}</option>
+            } @empty {
+              <option value="">No models installed</option>
+            }
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label">AI model</label>
+          <select class="form-control" [value]="aiValue()" (change)="onAiChange($any($event.target).value)">
+            @for (o of models.aiChoices(); track o.value) {
+              <option [value]="o.value">{{ o.label }}</option>
+            } @empty {
+              <option value="">No AI models available</option>
+            }
+          </select>
+        </div>
+      </div>
 
       <div class="processing-steps mt-4">
         <div class="processing-step" [class.active]="transcribing()" [class.completed]="!!transcript()">
@@ -159,10 +184,22 @@ const GEN_MESSAGES = [
 export class StudioComponent implements OnInit {
   private readonly electron = inject(ElectronService);
   private readonly config = inject(ConfigService);
+  readonly models = inject(ModelsService);
   private readonly toast = inject(ToastService);
   private readonly destroyRef = inject(DestroyRef);
 
   readonly accept = ACCEPT;
+
+  // Quick model pickers (reflect & persist the saved defaults).
+  readonly whisperValue = computed(() => this.config.config().whisperModel);
+  readonly aiValue = computed(() => this.models.currentAiValue(this.config.config()));
+
+  onWhisperChange(value: string): void {
+    void this.config.save({ whisperModel: value });
+  }
+  onAiChange(value: string): void {
+    void this.config.save(this.models.patchForAi(value));
+  }
 
   readonly currentAudioPath = signal('');
   readonly currentFileName = signal('');
