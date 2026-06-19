@@ -13,6 +13,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1400,
     height: 900,
+    icon: path.join(__dirname, '..', 'assets', process.platform === 'win32' ? 'icon.ico' : 'icon.png'),
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -68,9 +69,38 @@ function getUtilitiesPath() {
   return prodPath;
 }
 
+// Resolve a system-installed CLI binary by name. GUI-launched apps on macOS get
+// a minimal PATH that usually omits Homebrew, so check the common install dirs
+// first and fall back to the bare name (resolved against PATH) as a last resort.
+function resolveSystemBinary(...names: string[]): string {
+  const dirs = ['/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin', '/opt/local/bin'];
+  for (const name of names) {
+    for (const dir of dirs) {
+      const candidate = path.join(dir, name);
+      if (fs.existsSync(candidate)) return candidate;
+    }
+  }
+  return names[0]; // let the OS resolve it against PATH
+}
+
 function getWhisperPath() {
-  const utilitiesPath = getUtilitiesPath();
-  return path.join(utilitiesPath, 'bin', 'whisper-cli.exe');
+  // Prefer the component-managed download (macOS gets it on first run).
+  const managed = componentManager.resolveEntry('whisper');
+  if (managed) return managed;
+  if (process.platform === 'win32') {
+    // Windows ships a bundled whisper-cli.exe under utilities/bin.
+    const utilitiesPath = getUtilitiesPath();
+    return path.join(utilitiesPath, 'bin', 'whisper-cli.exe');
+  }
+  // Last resort on macOS/Linux: a system whisper.cpp CLI (Homebrew installs both names).
+  return resolveSystemBinary('whisper-cli', 'whisper-cpp');
+}
+
+// Path to an ffmpeg binary used to normalize input to the 16 kHz mono WAV that
+// whisper-cli expects (and to extract audio from video). Prefer the
+// component-managed download (Windows + macOS); fall back to a system ffmpeg.
+function getFfmpegPath() {
+  return componentManager.resolveEntry('ffmpeg') || resolveSystemBinary('ffmpeg');
 }
 
 function getWhisperModelsPath() {
@@ -431,8 +461,53 @@ function parseLatestSegmentEndSeconds(text: string): number | null {
   return parseInt(hh, 10) * 3600 + parseInt(mm, 10) * 60 + parseInt(ss, 10) + parseInt(ms, 10) / 1000;
 }
 
-ipcMain.handle('transcribe-audio', async (event, audioPath, modelName = 'base') => {
+// Convert any input (compressed audio, video, non-16k WAV) to the 16 kHz mono
+// PCM WAV that whisper-cli reliably reads. Rejects if ffmpeg can't be run.
+function convertToWav(inputPath: string, outputPath: string): Promise<string> {
   return new Promise((resolve, reject) => {
+    const ffmpegPath = getFfmpegPath();
+    const args = ['-y', '-i', inputPath, '-ac', '1', '-ar', '16000', '-c:a', 'pcm_s16le', outputPath];
+    const proc = spawn(ffmpegPath, args);
+    let errTail = '';
+    proc.stderr?.on('data', (d: Buffer) => { errTail = (errTail + d.toString()).slice(-4096); });
+    proc.on('error', reject);
+    proc.on('close', (code: number) => {
+      if (code === 0) resolve(outputPath);
+      else reject(new Error(`ffmpeg exited with code ${code}: ${errTail}`));
+    });
+  });
+}
+
+ipcMain.handle('transcribe-audio', async (event, audioPath, modelName = 'base') => {
+  const whisperPathPre = getWhisperPath();
+  const downloadedModelPre = componentManager.resolveEntry(`whisper-${modelName}`);
+  const modelPathPre = downloadedModelPre || path.join(getWhisperModelsPath(), `ggml-${modelName}.bin`);
+  if (process.platform !== 'win32' && !fs.existsSync(whisperPathPre)) {
+    throw new Error(
+      `Whisper engine not found. Download it from the setup screen (or install whisper.cpp with "brew install whisper-cpp").`
+    );
+  }
+  if (!fs.existsSync(modelPathPre)) {
+    throw new Error(`Whisper model not found at ${modelPathPre}. Download a model from the setup screen.`);
+  }
+
+  // Normalize the input to 16 kHz mono WAV before transcribing. If ffmpeg isn't
+  // available we fall back to feeding the original file directly.
+  const osMod = require('os');
+  const convDir = path.join(osMod.tmpdir(), `boardnotes-conv-${Date.now()}`);
+  fs.mkdirSync(convDir, { recursive: true });
+  let preparedInput = audioPath;
+  try {
+    const wavInput = path.join(convDir, 'input.wav');
+    await convertToWav(audioPath, wavInput);
+    preparedInput = wavInput;
+  } catch (e: any) {
+    console.warn('[Whisper] ffmpeg conversion failed, using original file:', e?.message || e);
+  }
+
+  return new Promise((resolve, reject) => {
+    const cleanupConv = () => { try { fs.rmSync(convDir, { recursive: true, force: true }); } catch { /* ignore */ } };
+    audioPath = preparedInput;
     const whisperPath = getWhisperPath();
     // Prefer a model installed via the setup screen (userData/components),
     // falling back to a model bundled in utilities/models.
@@ -472,7 +547,12 @@ ipcMain.handle('transcribe-audio', async (event, audioPath, modelName = 'base') 
     const totalSec = getWavDurationSeconds(audioPath);
     const startTime = Date.now();
 
-    const proc = spawn(whisperPath, args, { cwd: outputDir });
+    // The macOS whisper build ships its ggml/whisper dylibs next to the binary;
+    // point the dynamic loader at that directory so they resolve regardless of cwd.
+    const whisperEnv = process.platform === 'darwin'
+      ? { ...process.env, DYLD_FALLBACK_LIBRARY_PATH: [path.dirname(whisperPath), process.env.DYLD_FALLBACK_LIBRARY_PATH].filter(Boolean).join(':') }
+      : process.env;
+    const proc = spawn(whisperPath, args, { cwd: outputDir, env: whisperEnv });
 
     // Keep only a bounded tail of stderr for error reporting (avoids the
     // O(n^2) accumulate-and-rematch on every chunk that the old code did).
@@ -529,6 +609,7 @@ ipcMain.handle('transcribe-audio', async (event, audioPath, modelName = 'base') 
 
     proc.on('close', (code) => {
       clearInterval(heartbeat);
+      cleanupConv();
       if (code === 0) {
         mainWindow?.webContents.send('transcription-progress', {
           percent: 100,
@@ -557,6 +638,7 @@ ipcMain.handle('transcribe-audio', async (event, audioPath, modelName = 'base') 
 
     proc.on('error', (error) => {
       clearInterval(heartbeat);
+      cleanupConv();
       reject(error);
     });
   });

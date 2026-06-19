@@ -11,7 +11,7 @@
     "start": "npm run build && electron .",
     "electron:dev": "npm run build && electron . --enable-logging",
     "electron:debug": "npm run build && electron . --enable-logging --dev-tools",
-    "package:win-x64": "npm run build && electron-packager . Minutes --platform=win32 --arch=x64 --out=build --overwrite --ignore=\"\\.git\" --ignore=\"^/build\" --ignore=\"\\.ts$\" --ignore=\"\\.md$\" --extra-resource=utilities"
+    "package:win-x64": "npm run build && electron-packager . Minutes --platform=win32 --arch=x64 --out=build --overwrite --icon=assets/icon.ico --ignore=\"\\.git\" --ignore=\"^/build\" --ignore=\"\\.ts$\" --ignore=\"\\.md$\" --extra-resource=utilities"
   },
   "author": "",
   "license": "ISC",
@@ -32,7 +32,11 @@
     "appId": "com.minutes.app",
     "productName": "Minutes",
     "win": {
-      "target": "portable"
+      "target": "portable",
+      "icon": "assets/icon.ico"
+    },
+    "mac": {
+      "icon": "assets/icon.icns"
     },
     "portable": {
       "artifactName": "Minutes.exe"
@@ -41,6 +45,8 @@
       "**/*",
       "!**/*.py",
       "!assets/**/*",
+      "assets/icon.png",
+      "assets/icon.ico",
       "!build/**/*",
       "!*.md"
     ],
